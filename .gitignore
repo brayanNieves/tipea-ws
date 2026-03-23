@@ -1,0 +1,23 @@
+# Firebase
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+ui-debug.log
+
+# Functions
+functions/node_modules/
+functions/lib/
+
+# Environment
+.env
+.env.local
+serviceAccount.json
+*-service-account.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

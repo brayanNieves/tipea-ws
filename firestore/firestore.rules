@@ -1,0 +1,75 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── users ──────────────────────────────────────────────
+    // Each user can only read/write their own document
+    match /users/{userId} {
+      allow read, update: if request.auth != null && request.auth.uid == userId;
+      allow create: if request.auth != null;
+      allow delete: if false;
+    }
+
+    // ── tips ───────────────────────────────────────────────
+    // Any authenticated user can create a tip (QR scan)
+    // Only the tip owner can read it
+    // Updates/deletes only via Cloud Functions
+    match /tips/{tipId} {
+      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow create: if request.auth != null;
+      allow update, delete: if false;
+    }
+
+    // ── payouts ────────────────────────────────────────────
+    // Users can read their own payouts
+    // Only admin (you) can create payouts
+    match /payouts/{payoutId} {
+      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow write: if request.auth != null && request.auth.token.admin == true;
+    }
+
+    // ── commissions ────────────────────────────────────────
+    // Only you (super admin) can read/write
+    match /commissions/{commissionId} {
+      allow read, write: if request.auth != null && request.auth.token.admin == true;
+    }
+
+    // ── daily_summaries ────────────────────────────────────
+    // Only admin can read platform-wide summaries
+    match /daily_summaries/{summaryId} {
+      allow read: if request.auth != null && request.auth.token.admin == true;
+      allow write: if false;
+    }
+
+    // ── user_daily_stats ───────────────────────────────────
+    // Each user reads their own stats, admin reads all
+    match /user_daily_stats/{statId} {
+      allow read: if request.auth != null && (
+        request.auth.uid == resource.data.userId ||
+        request.auth.token.admin == true
+      );
+      allow write: if false;
+    }
+
+    // ── plans ──────────────────────────────────────────────
+    // Anyone can read plans (needed for signup page)
+    // Only admin can modify
+    match /plans/{planId} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.token.admin == true;
+    }
+
+    // ── subscriptions ──────────────────────────────────────
+    match /subscriptions/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if false;
+    }
+
+    // ── notifications ──────────────────────────────────────
+    // Only admin reads all notifications
+    match /notifications/{notifId} {
+      allow read, update: if request.auth != null && request.auth.token.admin == true;
+      allow write: if false;
+    }
+  }
+}
