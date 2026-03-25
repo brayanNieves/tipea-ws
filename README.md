@@ -134,6 +134,15 @@ firebase deploy --only firestore:rules
 firebase deploy --only firestore:indexes
 firebase deploy --only storage
 firebase deploy --only functions
+firebase deploy --only functions:onTipCreated
+firebase deploy --only functions:onPayoutCreated
+firebase deploy --only functions:onUserCreated
+firebase deploy --only functions:onDayRollover
+firebase deploy --only functions:createTip
+firebase deploy --only functions:onTipCreated,functions:onPayoutCreated,functions:onUserCreated,functions:onDayRollover,functions:createTip
+firebase deploy --only functions:onTipCreated --debug 2>&1 | tail -50
+rm -rf lib && npm run build && firebase deploy --only functions:onTipCreated,functions:onPayoutCreated,functions:onUserCreated,functions:onDayRollover,functions:createTip
+cd functions && npx tsc --noEmit
 ```
 
 firebase fi
