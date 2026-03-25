@@ -136,6 +136,9 @@ firebase deploy --only storage
 firebase deploy --only functions
 ```
 
+firebase fi
+restore:databases:list --project styleapp-1e840
+
 ---
 
 ## Commission Flow

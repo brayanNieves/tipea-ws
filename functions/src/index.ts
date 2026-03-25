@@ -1,8 +1,9 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
+import { getFirestore } from "firebase-admin/firestore";
 
 admin.initializeApp();
-const db = admin.firestore();
+const db = getFirestore();
 
 // ─────────────────────────────────────────────────────────────
 // HELPERS
@@ -38,7 +39,6 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 
 export const onTipCreated = onDocumentCreated({
   document: "tips/{tipId}",
-  database: "default"
 }, async (event) => {
   const snap = event.data;
   if (!snap) return;
@@ -94,7 +94,7 @@ export const onTipCreated = onDocumentCreated({
 
   // ── 6. Update daily_summaries (platform-wide) ────────────
   const summaryRef = db.doc(`daily_summaries/${today}`);
-  await db.runTransaction(async (tx) => {
+  await db.runTransaction(async (tx: any) => {
     const summarySnap = await tx.get(summaryRef);
     if (!summarySnap.exists) {
       tx.set(summaryRef, {
@@ -122,7 +122,7 @@ export const onTipCreated = onDocumentCreated({
   // ── 7. Update user_daily_stats (per user per day) ────────
   const statsId = `${tip.userId}_${today}`;
   const statsRef = db.doc(`user_daily_stats/${statsId}`);
-  await db.runTransaction(async (tx) => {
+  await db.runTransaction(async (tx: any) => {
     const statsSnap = await tx.get(statsRef);
     if (!statsSnap.exists) {
       tx.set(statsRef, {
@@ -184,7 +184,6 @@ export const onTipCreated = onDocumentCreated({
 // ─────────────────────────────────────────────────────────────
 export const onPayoutCreated = onDocumentCreated({
   document: "payouts/{payoutId}",
-  database: "default"
 }, async (event) => {
   const snap = event.data;
   if (!snap) return;
@@ -341,7 +340,7 @@ export const createTip = onCall(async (request) => {
   }
 
   const { amount, targetUserId } = request.data;
-  
+
   if (!amount || !targetUserId) {
     throw new HttpsError("invalid-argument", "Falta el monto (amount) o el ID del mesero (targetUserId).");
   }
