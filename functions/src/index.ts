@@ -181,21 +181,21 @@ export const onTipCreated = onDocumentCreated({
 
 
     //await mailer.sendTipStaffEmail(sampleTipData);
-    await mailer.sendTipAdminEmail({
-      tipId,
-      amount: tip.amount,
-      commissionPct,
-      commissionAmt,
-      netAmount,
-      source: tip.source ?? "manual",
-      createdAt: tip.createdAt?.toDate?.()?.toISOString() ?? new Date().toISOString(),
-      staffId: tip.userId,
-      staffName: user.name,
-      staffEmail: user.email,
-      staffRole: user.role,
-      planId: user.planId,
-      planName: plan.name,
-    });
+    // await mailer.sendTipAdminEmail({
+    //   tipId,
+    //   amount: tip.amount,
+    //   commissionPct,
+    //   commissionAmt,
+    //   netAmount,
+    //   source: tip.source ?? "manual",
+    //   createdAt: tip.createdAt?.toDate?.()?.toISOString() ?? new Date().toISOString(),
+    //   staffId: tip.userId,
+    //   staffName: user.name,
+    //   staffEmail: user.email,
+    //   staffRole: user.role,
+    //   planId: user.planId,
+    //   planName: plan.name,
+    // });
 
     console.log(
       `✅ [onTipCreated] tipId=${tipId} | user=${user.name} | ` +
@@ -345,19 +345,6 @@ export const onUserCreated = functions.auth
 
       // ── 1. Batch all writes together ─────────────────────────
       const batch = db.batch();
-
-      // Create Firestore user document
-      batch.set(db.doc(`users/${user.uid}`), {
-        name: user.displayName ?? "",
-        email: user.email ?? "",
-        phone: user.phoneNumber ?? "",
-        role: "waiter",         // default role — user updates in onboarding
-        planId: "plan_starter",   // everyone starts on Starter
-        pin: null,
-        active: true,
-        bankAccount: null,             // user adds bank account later
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
 
       // Create subscription record
       batch.set(db.doc(`subscriptions/${user.uid}`), {
