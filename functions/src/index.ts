@@ -39,7 +39,10 @@ function getYesterday(): string {
 //   7. Creates a notification for you (admin)
 // ─────────────────────────────────────────────────────────────
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
-import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { onCall, onRequest, HttpsError } from "firebase-functions/v2/https";
+import * as corsLib from "cors";
+
+const corsHandler = corsLib.default({ origin: true });
 
 export const onTipCreated = onDocumentCreated({
   document: "tips/{tipId}",
@@ -514,50 +517,54 @@ const OTP_EXPIRES_MINUTES = 10;
 const OTP_RATE_LIMIT_SECONDS = 60;
 const OTP_MAX_ATTEMPTS = 5;
 
-export const sendOtp = onCall({ cors: true }, async (request) => {
-  const { email } = request.data as { email?: string };
+export const sendOtp = onRequest((req, res) => {
+  corsHandler(req, res, async () => {
+    if (req.method !== "POST") {
+      res.status(405).json({ error: "Method not allowed" });
+      return;
+    }
 
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    throw new HttpsError("invalid-argument", "A valid email address is required.");
-  }
+    const { email } = req.body as { email?: string };
 
-  const otpRef = db.doc(`otps/${email}`);
-  const existing = await otpRef.get();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      res.status(400).json({ error: "A valid email address is required." });
+      return;
+    }
 
-  // Rate limit: block if a code was sent less than OTP_RATE_LIMIT_SECONDS ago
-  if (existing.exists) {
-    const createdAt = existing.data()?.createdAt?.toDate() as Date | undefined;
-    if (createdAt) {
-      const secondsElapsed = (Date.now() - createdAt.getTime()) / 1000;
-      if (secondsElapsed < OTP_RATE_LIMIT_SECONDS) {
-        const waitSeconds = Math.ceil(OTP_RATE_LIMIT_SECONDS - secondsElapsed);
-        throw new HttpsError(
-          "resource-exhausted",
-          `Please wait ${waitSeconds}s before requesting a new code.`
-        );
+    const otpRef = db.doc(`otps/${email}`);
+    const existing = await otpRef.get();
+
+    if (existing.exists) {
+      const createdAt = existing.data()?.createdAt?.toDate() as Date | undefined;
+      if (createdAt) {
+        const secondsElapsed = (Date.now() - createdAt.getTime()) / 1000;
+        if (secondsElapsed < OTP_RATE_LIMIT_SECONDS) {
+          const waitSeconds = Math.ceil(OTP_RATE_LIMIT_SECONDS - secondsElapsed);
+          res.status(429).json({ error: `Please wait ${waitSeconds}s before requesting a new code.` });
+          return;
+        }
       }
     }
-  }
 
-  // Generate 6-digit OTP
-  const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const expiresAt = new Date(Date.now() + OTP_EXPIRES_MINUTES * 60 * 1000);
 
-  const expiresAt = new Date(Date.now() + OTP_EXPIRES_MINUTES * 60 * 1000);
+    await otpRef.set({
+      code: otp,
+      expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
+      attempts: 0,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
 
-  await otpRef.set({
-    code: otp,
-    expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
-    attempts: 0,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    const sent = await mailer.sendOtpMail(email, otp, OTP_EXPIRES_MINUTES);
+    if (!sent) {
+      res.status(500).json({ error: "Failed to send OTP email. Please try again." });
+      return;
+    }
+
+    console.log(`✅ [sendOtp] OTP sent → ${email}`);
+    res.json({ success: true, message: "Verification code sent to your email." });
   });
-
-  const sent = await mailer.sendOtpMail(email, otp, OTP_EXPIRES_MINUTES);
-  if (!sent) {
-    throw new HttpsError("internal", "Failed to send OTP email. Please try again.");
-  }
-
-  console.log(`✅ [sendOtp] OTP sent → ${email}`);
-  return { success: true, message: "Verification code sent to your email." };
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -570,53 +577,63 @@ export const sendOtp = onCall({ cors: true }, async (request) => {
 // - Returns error if expired, incorrect, or max attempts reached
 // - Deletes the OTP document on success
 // ─────────────────────────────────────────────────────────────
-export const verifyOtp = onCall({ cors: true }, async (request) => {
-  const { email, code } = request.data as { email?: string; code?: string };
-
-  if (!email || !code) {
-    throw new HttpsError("invalid-argument", "email and code are required.");
-  }
-
-  if (!/^\d{6}$/.test(code)) {
-    throw new HttpsError("invalid-argument", "OTP must be a 6-digit number.");
-  }
-
-  const otpRef = db.doc(`otps/${email}`);
-
-  await db.runTransaction(async (tx) => {
-    const snap = await tx.get(otpRef);
-
-    if (!snap.exists) {
-      throw new HttpsError("not-found", "No verification code found for this email. Please request a new one.");
+export const verifyOtp = onRequest((req, res) => {
+  corsHandler(req, res, async () => {
+    if (req.method !== "POST") {
+      res.status(405).json({ error: "Method not allowed" });
+      return;
     }
 
-    const data = snap.data()!;
-    const attempts: number = data.attempts ?? 0;
-    const expiresAt = (data.expiresAt as admin.firestore.Timestamp).toDate();
+    const { email, code } = req.body as { email?: string; code?: string };
 
-    // Check max attempts
-    if (attempts >= OTP_MAX_ATTEMPTS) {
-      tx.delete(otpRef);
-      throw new HttpsError("resource-exhausted", "Too many failed attempts. Please request a new code.");
+    if (!email || !code) {
+      res.status(400).json({ error: "email and code are required." });
+      return;
     }
 
-    // Check expiry
-    if (new Date() > expiresAt) {
-      tx.delete(otpRef);
-      throw new HttpsError("deadline-exceeded", "Verification code has expired. Please request a new one.");
+    if (!/^\d{6}$/.test(code)) {
+      res.status(400).json({ error: "OTP must be a 6-digit number." });
+      return;
     }
 
-    // Check code
-    if (data.code !== code) {
-      tx.update(otpRef, { attempts: admin.firestore.FieldValue.increment(1) });
-      const remaining = OTP_MAX_ATTEMPTS - attempts - 1;
-      throw new HttpsError("invalid-argument", `Incorrect code. ${remaining} attempt(s) remaining.`);
+    const otpRef = db.doc(`otps/${email}`);
+
+    try {
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(otpRef);
+
+        if (!snap.exists) {
+          throw Object.assign(new Error("No verification code found for this email. Please request a new one."), { status: 404 });
+        }
+
+        const data = snap.data()!;
+        const attempts: number = data.attempts ?? 0;
+        const expiresAt = (data.expiresAt as admin.firestore.Timestamp).toDate();
+
+        if (attempts >= OTP_MAX_ATTEMPTS) {
+          tx.delete(otpRef);
+          throw Object.assign(new Error("Too many failed attempts. Please request a new code."), { status: 429 });
+        }
+
+        if (new Date() > expiresAt) {
+          tx.delete(otpRef);
+          throw Object.assign(new Error("Verification code has expired. Please request a new one."), { status: 410 });
+        }
+
+        if (data.code !== code) {
+          tx.update(otpRef, { attempts: admin.firestore.FieldValue.increment(1) });
+          const remaining = OTP_MAX_ATTEMPTS - attempts - 1;
+          throw Object.assign(new Error(`Incorrect code. ${remaining} attempt(s) remaining.`), { status: 400 });
+        }
+
+        tx.delete(otpRef);
+      });
+    } catch (err: any) {
+      res.status(err.status ?? 500).json({ error: err.message });
+      return;
     }
 
-    // Valid — delete OTP
-    tx.delete(otpRef);
+    console.log(`✅ [verifyOtp] OTP verified → ${email}`);
+    res.json({ success: true, message: "Email verified successfully." });
   });
-
-  console.log(`✅ [verifyOtp] OTP verified → ${email}`);
-  return { success: true, message: "Email verified successfully." };
 });
