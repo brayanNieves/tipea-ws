@@ -72,7 +72,34 @@ export const onTipCreated = onDocumentCreated({
     const commissionAmt: number = Math.round((tip.amount * commissionPct) / 100);
     const netAmount: number = tip.amount - commissionAmt;
 
-    // ── 5. Batch simple writes (tip + commission + notification) ──
+    // ── 4.5. Detect suspicious activity ─────────────────────
+    const suspicionReasons: string[] = [];
+
+    if (tip.amount > 5000) {
+      suspicionReasons.push(`Unusually high tip amount: RD$ ${tip.amount}`);
+    }
+
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    const recentTipsSnap = await db.collection("tips")
+      .where("userId", "==", tip.userId)
+      .where("createdAt", ">=", admin.firestore.Timestamp.fromDate(fiveMinutesAgo))
+      .get();
+
+    if (recentTipsSnap.size > 1) {
+      suspicionReasons.push(`${recentTipsSnap.size} tips submitted within 5 minutes`);
+    }
+
+    if (tip.amount >= 1000 && tip.amount % 1000 === 0) {
+      suspicionReasons.push(`Suspiciously round amount: RD$ ${tip.amount}`);
+    }
+
+    if (tip.source === "manual" && tip.amount > 2000) {
+      suspicionReasons.push(`High manual tip (no QR): RD$ ${tip.amount}`);
+    }
+
+    const isSuspicious = suspicionReasons.length > 0;
+
+    // ── 5. Batch simple writes ───────────────────────────────
     const summaryRef = db.doc(`daily_summaries/${today}`);
     const statsRef = db.doc(`user_daily_stats/${tip.userId}_${today}`);
     const batch = db.batch();
@@ -84,6 +111,9 @@ export const onTipCreated = onDocumentCreated({
       netAmount,
       status: "pending",
       processedAt: admin.firestore.FieldValue.serverTimestamp(),
+      suspicious: isSuspicious,
+      suspicionReasons: isSuspicious ? suspicionReasons : [],
+      suspicionReviewed: false,
     });
 
     // Create commission income record
@@ -116,6 +146,20 @@ export const onTipCreated = onDocumentCreated({
       read: false,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+
+    // Create suspicious activity notification if needed
+    if (isSuspicious) {
+      const suspiciousNotifRef = db.collection("notifications").doc();
+      batch.set(suspiciousNotifRef, {
+        type: "suspicious_activity",
+        message: `Suspicious tip from ${user.name}: RD$ ${tip.amount}`,
+        userId: tip.userId,
+        tipId,
+        reasons: suspicionReasons,
+        read: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
 
     await batch.commit();
 
@@ -179,27 +223,10 @@ export const onTipCreated = onDocumentCreated({
 
     ]);
 
-
-    //await mailer.sendTipStaffEmail(sampleTipData);
-    await mailer.sendTipAdminEmail({
-      tipId,
-      amount: tip.amount,
-      commissionPct,
-      commissionAmt,
-      netAmount,
-      source: tip.source ?? "manual",
-      createdAt: tip.createdAt?.toDate?.()?.toISOString() ?? new Date().toISOString(),
-      staffId: tip.userId,
-      staffName: user.name,
-      staffEmail: user.email,
-      staffRole: user.role,
-      planId: user.planId,
-      planName: plan.name,
-    });
-
     console.log(
       `✅ [onTipCreated] tipId=${tipId} | user=${user.name} | ` +
-      `gross=$${tip.amount} | commission=$${commissionAmt} | net=$${netAmount}`
+      `gross=$${tip.amount} | commission=$${commissionAmt} | net=$${netAmount} | ` +
+      `suspicious=${isSuspicious}`
     );
 
     return null;
@@ -207,14 +234,12 @@ export const onTipCreated = onDocumentCreated({
   } catch (error) {
     console.error(`❌ [onTipCreated] tipId=${tipId}`, error);
 
-    // Mark tip as failed so it doesn't get stuck in a pending limbo
     await snap.ref.update({
       status: "error",
       errorMessage: error instanceof Error ? error.message : String(error),
       errorAt: admin.firestore.FieldValue.serverTimestamp(),
-    }).catch(() => { }); // silently ignore if this update also fails
+    }).catch(() => { });
 
-    // Send error details to admin via email
     await mailer.sendErrorMail(`onTipCreated — tipId: ${tipId}`, error);
 
     return null;
@@ -346,19 +371,6 @@ export const onUserCreated = functions.auth
       // ── 1. Batch all writes together ─────────────────────────
       const batch = db.batch();
 
-      // Create Firestore user document
-      batch.set(db.doc(`users/${user.uid}`), {
-        name: user.displayName ?? "",
-        email: user.email ?? "",
-        phone: user.phoneNumber ?? "",
-        role: "waiter",         // default role — user updates in onboarding
-        planId: "plan_starter",   // everyone starts on Starter
-        pin: null,
-        active: true,
-        bankAccount: null,             // user adds bank account later
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-
       // Create subscription record
       batch.set(db.doc(`subscriptions/${user.uid}`), {
         userId: user.uid,
@@ -486,4 +498,125 @@ export const createTip = onCall(async (request) => {
 
     throw new HttpsError("internal", "An unexpected error occurred while processing the tip.");
   }
+});
+
+// ─────────────────────────────────────────────────────────────
+// sendOtp
+// Generates a 6-digit OTP and sends it to the provided email.
+//
+// Request:  { email: string }
+// Response: { success: true }
+//
+// - OTP expires in 10 minutes
+// - Rate-limited: 1 request per minute per email
+// ─────────────────────────────────────────────────────────────
+const OTP_EXPIRES_MINUTES = 10;
+const OTP_RATE_LIMIT_SECONDS = 60;
+const OTP_MAX_ATTEMPTS = 5;
+
+export const sendOtp = onCall({ cors: true }, async (request) => {
+  const { email } = request.data as { email?: string };
+
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new HttpsError("invalid-argument", "A valid email address is required.");
+  }
+
+  const otpRef = db.doc(`otps/${email}`);
+  const existing = await otpRef.get();
+
+  // Rate limit: block if a code was sent less than OTP_RATE_LIMIT_SECONDS ago
+  if (existing.exists) {
+    const createdAt = existing.data()?.createdAt?.toDate() as Date | undefined;
+    if (createdAt) {
+      const secondsElapsed = (Date.now() - createdAt.getTime()) / 1000;
+      if (secondsElapsed < OTP_RATE_LIMIT_SECONDS) {
+        const waitSeconds = Math.ceil(OTP_RATE_LIMIT_SECONDS - secondsElapsed);
+        throw new HttpsError(
+          "resource-exhausted",
+          `Please wait ${waitSeconds}s before requesting a new code.`
+        );
+      }
+    }
+  }
+
+  // Generate 6-digit OTP
+  const otp = String(Math.floor(100000 + Math.random() * 900000));
+
+  const expiresAt = new Date(Date.now() + OTP_EXPIRES_MINUTES * 60 * 1000);
+
+  await otpRef.set({
+    code: otp,
+    expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
+    attempts: 0,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  const sent = await mailer.sendOtpMail(email, otp, OTP_EXPIRES_MINUTES);
+  if (!sent) {
+    throw new HttpsError("internal", "Failed to send OTP email. Please try again.");
+  }
+
+  console.log(`✅ [sendOtp] OTP sent → ${email}`);
+  return { success: true, message: "Verification code sent to your email." };
+});
+
+// ─────────────────────────────────────────────────────────────
+// verifyOtp
+// Validates the 6-digit OTP for a given email.
+//
+// Request:  { email: string, code: string }
+// Response: { success: true }
+//
+// - Returns error if expired, incorrect, or max attempts reached
+// - Deletes the OTP document on success
+// ─────────────────────────────────────────────────────────────
+export const verifyOtp = onCall({ cors: true }, async (request) => {
+  const { email, code } = request.data as { email?: string; code?: string };
+
+  if (!email || !code) {
+    throw new HttpsError("invalid-argument", "email and code are required.");
+  }
+
+  if (!/^\d{6}$/.test(code)) {
+    throw new HttpsError("invalid-argument", "OTP must be a 6-digit number.");
+  }
+
+  const otpRef = db.doc(`otps/${email}`);
+
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(otpRef);
+
+    if (!snap.exists) {
+      throw new HttpsError("not-found", "No verification code found for this email. Please request a new one.");
+    }
+
+    const data = snap.data()!;
+    const attempts: number = data.attempts ?? 0;
+    const expiresAt = (data.expiresAt as admin.firestore.Timestamp).toDate();
+
+    // Check max attempts
+    if (attempts >= OTP_MAX_ATTEMPTS) {
+      tx.delete(otpRef);
+      throw new HttpsError("resource-exhausted", "Too many failed attempts. Please request a new code.");
+    }
+
+    // Check expiry
+    if (new Date() > expiresAt) {
+      tx.delete(otpRef);
+      throw new HttpsError("deadline-exceeded", "Verification code has expired. Please request a new one.");
+    }
+
+    // Check code
+    if (data.code !== code) {
+      tx.update(otpRef, { attempts: admin.firestore.FieldValue.increment(1) });
+      const remaining = OTP_MAX_ATTEMPTS - attempts - 1;
+      throw new HttpsError("invalid-argument", `Incorrect code. ${remaining} attempt(s) remaining.`);
+    }
+
+    // Valid — delete OTP
+    tx.delete(otpRef);
+  });
+
+  console.log(`✅ [verifyOtp] OTP verified → ${email}`);
+  return { success: true, message: "Email verified successfully." };
 });

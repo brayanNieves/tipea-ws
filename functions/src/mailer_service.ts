@@ -1,6 +1,7 @@
 import nodemailer from "nodemailer";
 import { buildTipStaffEmail, buildTipAdminEmail, TipEmailData } from "./build-tip-email";
 import { buildErrorEmail } from "./build-error-email";
+import { buildOtpEmail } from "./build-otp-email";
 
 export class Mailer {
     private from = "tipapp@gmail.com";
@@ -61,6 +62,18 @@ export class Mailer {
             this.sendTipAdminEmail(data),
         ]);
         console.log(`📨 [Mailer] sendTipEmails done | staff: ${staff ? "✅" : "❌"} | admin: ${admin ? "✅" : "❌"}`);
+    }
+
+    // ─── OTP email ────────────────────────────────────────────────────────────
+
+    public async sendOtpMail(to: string, otp: string, expiresInMinutes = 10): Promise<boolean> {
+        console.log(`📧 [Mailer] Sending OTP email → ${to}`);
+        return this.sendMail(
+            to,
+            "Tu código de verificación — TipApp",
+            `Tu código OTP es: ${otp}. Expira en ${expiresInMinutes} minutos.`,
+            buildOtpEmail(otp, expiresInMinutes)
+        );
     }
 
     // ─── Error email ──────────────────────────────────────────────────────────
