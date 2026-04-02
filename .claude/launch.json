@@ -1,0 +1,22 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Functions Emulator",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "functions", "run", "serve"],
+      "port": 5001
+    },
+    {
+      "name": "Emulator UI",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "functions", "run", "serve"],
+      "port": 4000
+    },
+    {
+      "name": "TypeScript Watch",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "functions", "run", "build:watch"]
+    }
+  ]
+}

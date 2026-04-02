@@ -61,9 +61,13 @@ export const onTipCreated = onDocumentCreated({
     }
 
     // ── 2. Fetch user document ───────────────────────────────
-    const userSnap = await db.doc(`users/${tip.userId}`).get();
+    const [userSnap, authUser] = await Promise.all([
+      db.doc(`users/${tip.userId}`).get(),
+      admin.auth().getUser(tip.userId).catch(() => null),
+    ]);
     const user = userSnap.data();
     if (!user) throw new Error(`User not found: ${tip.userId}`);
+    const emailVerified = authUser?.emailVerified ?? false;
 
     // ── 3. Fetch user's active plan ──────────────────────────
     const planSnap = await db.doc(`plans/${user.planId}`).get();
@@ -225,6 +229,29 @@ export const onTipCreated = onDocumentCreated({
       }),
 
     ]);
+
+    // ── 7. Send tip notification email to staff ──────────────
+    if (emailVerified && user.email) {
+      await mailer.sendTipStaffEmail({
+        tipId,
+        amount: tip.amount,
+        commissionPct,
+        commissionAmt,
+        netAmount,
+        source: tip.source ?? "qr",
+        createdAt: new Date().toISOString(),
+        staffId: tip.userId,
+        staffName: user.name,
+        staffEmail: user.email,
+        staffRole: user.role,
+        planId: user.planId,
+        planName: plan.name,
+      });
+    } else {
+      console.log(
+        `⚠️ [onTipCreated] Skipping staff email — emailVerified=${emailVerified}, email=${user.email ?? "none"}`
+      );
+    }
 
     console.log(
       `✅ [onTipCreated] tipId=${tipId} | user=${user.name} | ` +
