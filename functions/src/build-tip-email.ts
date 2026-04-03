@@ -35,7 +35,7 @@ function getInitials(name: string): string {
 }
 
 function formatTime(isoDate: string): string {
-    return new Date(isoDate).toLocaleTimeString("en-US", {
+    return new Date(isoDate).toLocaleTimeString("es-DO", {
         hour: "2-digit",
         minute: "2-digit",
     });
@@ -52,13 +52,13 @@ export function buildTipStaffEmail(data: TipEmailData): string {
 
     return `
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="dark">
   <meta name="supported-color-schemes" content="dark">
-  <title>You received a tip!</title>
+  <title>¡Recibiste una propina!</title>
   <!--[if mso]>
   <noscript>
     <xml>
@@ -78,7 +78,7 @@ export function buildTipStaffEmail(data: TipEmailData): string {
 
 <!-- Preview text -->
 <div style="display:none; max-height:0; overflow:hidden;">
-  💰 You received RD$ ${formatAmount(data.amount)} tip! Your earnings: RD$ ${formatAmount(data.netAmount)}
+  💰 ¡Recibiste RD$ ${formatAmount(data.amount)} de propina! Tus ganancias: RD$ ${formatAmount(data.netAmount)}
   &zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;
 </div>
 
@@ -120,12 +120,12 @@ export function buildTipStaffEmail(data: TipEmailData): string {
 
                   <!-- Greeting -->
                   <p style="margin:0 0 8px; font-size:14px; font-weight:500; color:#6b7280; text-transform:uppercase; letter-spacing:1.5px;">
-                    Hey ${firstName} 👋
+                    Hola ${firstName} 👋
                   </p>
 
                   <!-- Headline -->
                   <h1 style="margin:0 0 8px; font-size:32px; font-weight:800; color:#ffffff; letter-spacing:-1px; line-height:1.2;">
-                    You got a tip!
+                    ¡Recibiste una propina!
                   </h1>
 
                   <!-- Big amount -->
@@ -135,7 +135,7 @@ export function buildTipStaffEmail(data: TipEmailData): string {
 
                   <!-- Meta -->
                   <p style="margin:8px 0 0; font-size:14px; color:#4b5563;">
-                    via ${data.source === "qr" ? "QR scan" : "manual entry"} · ${formatTime(data.createdAt)}
+                    vía ${data.source === "qr" ? "escaneo QR" : "entrada manual"} · ${formatTime(data.createdAt)}
                   </p>
                 </td>
               </tr>
@@ -152,7 +152,7 @@ export function buildTipStaffEmail(data: TipEmailData): string {
               <tr>
                 <td style="padding:16px 24px; border-bottom:1px solid rgba(255,255,255,0.06);">
                   <p style="margin:0; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:1.5px; color:#6b7280;">
-                    Breakdown
+                    Detalle
                   </p>
                 </td>
               </tr>
@@ -162,7 +162,7 @@ export function buildTipStaffEmail(data: TipEmailData): string {
                 <td style="padding:16px 24px; border-bottom:1px solid rgba(255,255,255,0.03);">
                   <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
                     <tr>
-                      <td style="font-size:14px; color:#9ca3af;">Tip received</td>
+                      <td style="font-size:14px; color:#9ca3af;">Propina recibida</td>
                       <td align="right" style="font-size:14px; font-weight:600; color:#e5e7eb;">
                         RD$ ${formatAmount(data.amount)}
                       </td>
@@ -177,7 +177,7 @@ export function buildTipStaffEmail(data: TipEmailData): string {
                   <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
                     <tr>
                       <td style="font-size:14px; color:#9ca3af;">
-                        Platform fee (${data.commissionPct}% · ${data.planName} plan)
+                        Comisión de plataforma (${data.commissionPct}% · plan ${data.planName})
                       </td>
                       <td align="right" style="font-size:14px; font-weight:600; color:#6b7280;">
                         - RD$ ${formatAmount(data.commissionAmt)}
@@ -193,7 +193,7 @@ export function buildTipStaffEmail(data: TipEmailData): string {
                   <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
                     <tr>
                       <td style="font-size:15px; font-weight:700; color:#00E676;">
-                        Your earnings
+                        Tus ganancias
                       </td>
                       <td align="right" style="font-size:22px; font-weight:800; color:#00E676; letter-spacing:-0.5px;">
                         RD$ ${formatAmount(data.netAmount)}
@@ -216,10 +216,10 @@ export function buildTipStaffEmail(data: TipEmailData): string {
                   <table role="presentation" cellpadding="0" cellspacing="0">
                     <tr>
                       <td style="background:rgba(245,197,24,0.13); border:1px solid rgba(245,197,24,0.25); border-radius:20px; padding:4px 12px; font-size:12px; font-weight:600; color:#F5C518;">
-                        ${data.planName} Plan · ${data.commissionPct}% fee
+                        Plan ${data.planName} · ${data.commissionPct}% de comisión
                       </td>
                       <td style="padding-left:12px; font-size:13px; color:#6b7280;">
-                        Upgrade to reduce your platform fee
+                        Mejora tu plan para reducir tu comisión
                       </td>
                     </tr>
                   </table>
@@ -233,9 +233,9 @@ export function buildTipStaffEmail(data: TipEmailData): string {
         <tr>
           <td align="center">
             <p style="margin:0; font-size:12px; color:#374151; line-height:1.8;">
-              TipApp — tip management platform<br/>
+              TipApp — plataforma de propinas<br/>
               <span style="color:#1f2937;">
-                Your tips will be transferred to your bank account periodically.
+                Tus propinas serán transferidas a tu cuenta bancaria periódicamente.
               </span><br/>
               <span style="color:#111827;">${data.createdAt}</span>
             </p>
@@ -258,13 +258,13 @@ export function buildTipAdminEmail(data: TipEmailData): string {
 
     return `
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="dark">
   <meta name="supported-color-schemes" content="dark">
-  <title>New commission earned</title>
+  <title>Nueva comisión generada</title>
   <!--[if mso]>
   <noscript>
     <xml>
@@ -284,7 +284,7 @@ export function buildTipAdminEmail(data: TipEmailData): string {
 
 <!-- Preview text -->
 <div style="display:none; max-height:0; overflow:hidden;">
-  💵 Commission earned: RD$ ${formatAmount(data.commissionAmt)} from ${data.staffName}'s tip
+  💵 Comisión generada: RD$ ${formatAmount(data.commissionAmt)} por la propina de ${data.staffName}
   &zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;
 </div>
 
@@ -317,7 +317,7 @@ export function buildTipAdminEmail(data: TipEmailData): string {
 
                   <!-- Label -->
                   <p style="margin:0 0 8px; font-size:13px; font-weight:600; color:#6b7280; text-transform:uppercase; letter-spacing:1.5px;">
-                    Commission earned
+                    Comisión generada
                   </p>
 
                   <!-- Big amount -->
@@ -327,7 +327,7 @@ export function buildTipAdminEmail(data: TipEmailData): string {
 
                   <!-- Meta -->
                   <p style="margin:8px 0 0; font-size:14px; color:#4b5563;">
-                    ${data.commissionPct}% of RD$ ${formatAmount(data.amount)} tip · ${data.planName} plan
+                    ${data.commissionPct}% de propina de RD$ ${formatAmount(data.amount)} · plan ${data.planName}
                   </p>
                 </td>
               </tr>
@@ -361,7 +361,7 @@ export function buildTipAdminEmail(data: TipEmailData): string {
                           ${data.staffName} ${emoji}
                         </p>
                         <p style="margin:4px 0 0; font-size:13px; color:#6b7280;">
-                          ${capitalizedRole} · ${data.planName} plan · ID: ${data.staffId.slice(0, 8)}...
+                          ${capitalizedRole} · Plan ${data.planName} · ID: ${data.staffId.slice(0, 8)}...
                         </p>
                       </td>
                     </tr>
@@ -374,7 +374,7 @@ export function buildTipAdminEmail(data: TipEmailData): string {
                 <td style="padding:16px 24px; border-bottom:1px solid rgba(255,255,255,0.03);">
                   <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
                     <tr>
-                      <td style="font-size:14px; color:#9ca3af;">Gross tip</td>
+                      <td style="font-size:14px; color:#9ca3af;">Propina bruta</td>
                       <td align="right" style="font-size:14px; font-weight:600; color:#e5e7eb;">
                         RD$ ${formatAmount(data.amount)}
                       </td>
@@ -389,7 +389,7 @@ export function buildTipAdminEmail(data: TipEmailData): string {
                   <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
                     <tr>
                       <td style="font-size:15px; font-weight:700; color:#F5C518;">
-                        Your commission (${data.commissionPct}%)
+                        Tu comisión (${data.commissionPct}%)
                       </td>
                       <td align="right" style="font-size:24px; font-weight:800; color:#F5C518; letter-spacing:-0.5px;">
                         + RD$ ${formatAmount(data.commissionAmt)}
@@ -404,7 +404,7 @@ export function buildTipAdminEmail(data: TipEmailData): string {
                 <td style="padding:16px 24px;">
                   <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
                     <tr>
-                      <td style="font-size:14px; color:#9ca3af;">Net to staff</td>
+                      <td style="font-size:14px; color:#9ca3af;">Neto al empleado</td>
                       <td align="right" style="font-size:14px; font-weight:600; color:#6b7280;">
                         RD$ ${formatAmount(data.netAmount)}
                       </td>
@@ -423,19 +423,19 @@ export function buildTipAdminEmail(data: TipEmailData): string {
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0d1117; border:1px solid rgba(255,255,255,0.06); border-radius:12px;">
               <tr>
                 <td style="padding:16px 24px; width:33%;">
-                  <p style="margin:0 0 4px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:1px; color:#4b5563;">Source</p>
+                  <p style="margin:0 0 4px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:1px; color:#4b5563;">Origen</p>
                   <p style="margin:0; font-size:13px; color:#e5e7eb; font-family:monospace;">
-                    ${data.source === "qr" ? "📱 QR scan" : "✏️ Manual"}
+                    ${data.source === "qr" ? "📱 Escaneo QR" : "✏️ Manual"}
                   </p>
                 </td>
                 <td style="padding:16px 24px; width:33%; text-align:center;">
-                  <p style="margin:0 0 4px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:1px; color:#4b5563;">Tip ID</p>
+                  <p style="margin:0 0 4px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:1px; color:#4b5563;">ID de propina</p>
                   <p style="margin:0; font-size:13px; color:#e5e7eb; font-family:monospace;">
                     ${data.tipId.slice(0, 12)}...
                   </p>
                 </td>
                 <td style="padding:16px 24px; width:33%; text-align:right;">
-                  <p style="margin:0 0 4px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:1px; color:#4b5563;">Time</p>
+                  <p style="margin:0 0 4px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:1px; color:#4b5563;">Hora</p>
                   <p style="margin:0; font-size:13px; color:#e5e7eb; font-family:monospace;">
                     ${formatTime(data.createdAt)}
                   </p>
@@ -449,9 +449,9 @@ export function buildTipAdminEmail(data: TipEmailData): string {
         <tr>
           <td align="center">
             <p style="margin:0; font-size:12px; color:#374151; line-height:1.8;">
-              TipApp — tip management platform<br/>
+              TipApp — plataforma de propinas<br/>
               <span style="color:#1f2937;">
-                Check your dashboard for full revenue breakdown.
+                Revisa tu panel para el desglose completo de ingresos.
               </span><br/>
               <span style="color:#111827;">${data.createdAt}</span>
             </p>

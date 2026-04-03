@@ -61,13 +61,10 @@ export const onTipCreated = onDocumentCreated({
     }
 
     // ── 2. Fetch user document ───────────────────────────────
-    const [userSnap, authUser] = await Promise.all([
-      db.doc(`users/${tip.userId}`).get(),
-      admin.auth().getUser(tip.userId).catch(() => null),
-    ]);
+    const userSnap = await db.doc(`users/${tip.userId}`).get();
     const user = userSnap.data();
     if (!user) throw new Error(`User not found: ${tip.userId}`);
-    const emailVerified = authUser?.emailVerified ?? false;
+    const emailVerified = user?.emailVerified ?? false;
 
     // ── 3. Fetch user's active plan ──────────────────────────
     const planSnap = await db.doc(`plans/${user.planId}`).get();
@@ -231,7 +228,7 @@ export const onTipCreated = onDocumentCreated({
     ]);
 
     // ── 7. Send tip notification email to staff ──────────────
-    if (emailVerified && user.email) {
+    if (user.emailVerified && user.email) {
       await mailer.sendTipStaffEmail({
         tipId,
         amount: tip.amount,
