@@ -34,10 +34,24 @@ function getInitials(name: string): string {
         .slice(0, 2);
 }
 
+const DR_TIMEZONE = "America/Santo_Domingo";
+
 function formatTime(isoDate: string): string {
     return new Date(isoDate).toLocaleTimeString("es-DO", {
         hour: "2-digit",
         minute: "2-digit",
+        timeZone: DR_TIMEZONE,
+    });
+}
+
+function formatDateTime(isoDate: string): string {
+    return new Date(isoDate).toLocaleString("es-DO", {
+        day: "2-digit",
+        month: "long",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: DR_TIMEZONE,
     });
 }
 
@@ -237,7 +251,7 @@ export function buildTipStaffEmail(data: TipEmailData): string {
               <span style="color:#1f2937;">
                 Tus propinas serán transferidas a tu cuenta bancaria periódicamente.
               </span><br/>
-              <span style="color:#111827;">${data.createdAt}</span>
+              <span style="color:#111827;">${formatDateTime(data.createdAt)}</span>
             </p>
           </td>
         </tr>
@@ -453,7 +467,7 @@ export function buildTipAdminEmail(data: TipEmailData): string {
               <span style="color:#1f2937;">
                 Revisa tu panel para el desglose completo de ingresos.
               </span><br/>
-              <span style="color:#111827;">${data.createdAt}</span>
+              <span style="color:#111827;">${formatDateTime(data.createdAt)}</span>
             </p>
           </td>
         </tr>
