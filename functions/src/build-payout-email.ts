@@ -1,76 +1,68 @@
 const DR_TIMEZONE = "America/Santo_Domingo";
 
 export interface PayoutEmailData {
-    // Payout document
-    payoutId: string;
-    grossAmount: number;
-    commissionAmt: number;
-    netToUser: number;
-    method: string;           // "transfer" | "cash"
-    bankName: string;
-    accountType: string;
-    accountLast4: string;
-    holderName: string;
-    referenceNumber: string | null;
-    transferDate: string;     // ISO string
-    tipCount: number;
-    notes: string | null;
+  // Payout document
+  payoutId: string;
+  grossAmount: number;
+  commissionAmt: number;
+  netToUser: number;
+  method: string;           // "transfer" | "cash"
+  bankName: string;
+  accountType: string;
+  accountLast4: string;
+  holderName: string;
+  referenceNumber: string | null;
+  transferDate: string;     // ISO string
+  tipCount: number;
+  notes: string | null;
 
-    // User
-    staffName: string;
-    staffEmail: string;
-    staffRole: string;
+  // User
+  staffName: string;
+  staffEmail: string;
+  staffRole: string;
 }
 
 function formatAmount(amount: number): string {
-    return amount.toLocaleString("es-DO");
+  return amount.toLocaleString("es-DO");
 }
 
 function formatDateTime(isoDate: string): string {
-    return new Date(isoDate).toLocaleString("es-DO", {
-        day: "2-digit",
-        month: "long",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        timeZone: DR_TIMEZONE,
-    });
+  return new Date(isoDate).toLocaleString("es-DO", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: DR_TIMEZONE,
+  });
 }
 
 function formatDate(isoDate: string): string {
-    return new Date(isoDate).toLocaleDateString("es-DO", {
-        day: "2-digit",
-        month: "long",
-        year: "numeric",
-        timeZone: DR_TIMEZONE,
-    });
+  return new Date(isoDate).toLocaleDateString("es-DO", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+    timeZone: DR_TIMEZONE,
+  });
 }
 
 function getInitials(name: string): string {
-    return name
-        .split(" ")
-        .map((n) => n[0])
-        .join("")
-        .toUpperCase()
-        .slice(0, 2);
+  return name
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
 }
 
-const roleLabel: Record<string, string> = {
-    dj: "DJ",
-    waiter: "Mesero",
-    vallet: "Valet",
-    bartender: "Bartender",
-    other: "Otro",
-};
 
 export function buildPayoutEmail(data: PayoutEmailData): string {
-    const initials = getInitials(data.staffName);
-    const firstName = data.staffName.split(" ")[0];
-    const methodLabel = data.method === "transfer" ? "Transferencia bancaria" : "Efectivo";
-    const methodIcon = data.method === "transfer" ? "🏦" : "💵";
-    const role = roleLabel[data.staffRole] ?? data.staffRole;
+  const initials = getInitials(data.staffName);
+  const firstName = data.staffName.split(" ")[0];
+  const methodLabel = data.method === "transfer" ? "Transferencia bancaria" : "Efectivo";
+  const methodIcon = data.method === "transfer" ? "🏦" : "💵";
 
-    return `
+  return `
 <!DOCTYPE html>
 <html lang="es">
 <head>
