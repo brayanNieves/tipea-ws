@@ -302,6 +302,11 @@ export const onPayoutCreated = onDocumentCreated({
       );
     }
 
+    // ── 1.5. Fetch user to get email and emailVerified ───────
+    const userSnap = await db.doc(`users/${payout.userId}`).get();
+    const user = userSnap.data();
+    if (!user) throw new Error(`User not found: ${payout.userId}`);
+
     // ── 2. Mark all included tips as paid ────────────────────
     const batch = db.batch();
     for (const tipId of payout.tipsIncluded) {
@@ -356,6 +361,32 @@ export const onPayoutCreated = onDocumentCreated({
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       }),
     ]);
+
+    // ── 6. Send payout email to staff ────────────────────────
+    if (user.emailVerified === true && user.email) {
+      await mailer.sendPayoutEmail({
+        payoutId,
+        grossAmount: payout.grossAmount,
+        commissionAmt: payout.commissionAmt,
+        netToUser: payout.netToUser,
+        method: payout.method,
+        bankName: payout.bankName,
+        accountType: payout.accountType,
+        accountLast4: payout.accountLast4,
+        holderName: payout.holderName,
+        referenceNumber: payout.referenceNumber ?? null,
+        transferDate: payout.transferDate?.toDate?.()?.toISOString() ?? new Date().toISOString(),
+        tipCount: payout.tipsIncluded.length,
+        notes: payout.notes ?? null,
+        staffName: user.name,
+        staffEmail: user.email,
+        staffRole: user.role,
+      });
+    } else {
+      console.log(
+        `⚠️ [onPayoutCreated] Skipping payout email — emailVerified=${user.emailVerified}, email=${user.email ?? "none"}`
+      );
+    }
 
     console.log(`✅ [onPayoutCreated] payoutId=${payoutId} | userId=${payout.userId} | amount=$${payout.netToUser}`);
 

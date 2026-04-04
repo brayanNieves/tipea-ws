@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import { buildTipStaffEmail, buildTipAdminEmail, TipEmailData } from "./build-tip-email";
+import { buildPayoutEmail, PayoutEmailData } from "./build-payout-email";
 import { buildErrorEmail } from "./build-error-email";
 import { buildOtpEmail } from "./build-otp-email";
 
@@ -61,6 +62,18 @@ export class Mailer {
             this.sendTipAdminEmail(data),
         ]);
         console.log(`📨 [Mailer] sendTipEmails done | staff: ${staff ? "✅" : "❌"} | admin: ${admin ? "✅" : "❌"}`);
+    }
+
+    // ─── Payout email ─────────────────────────────────────────────────────────
+
+    public async sendPayoutEmail(data: PayoutEmailData): Promise<boolean> {
+        console.log(`📧 [Mailer] Sending payout email → ${data.staffName} (${data.staffEmail}) | net: RD$ ${data.netToUser} | tips: ${data.tipCount}`);
+        return this.sendMail(
+            data.staffEmail,
+            `🏦 ¡Tu pago de RD$ ${data.netToUser.toLocaleString("es-DO")} ha sido enviado!`,
+            `Hola ${data.staffName}, tu pago de RD$ ${data.netToUser} por ${data.tipCount} ${data.tipCount === 1 ? "propina" : "propinas"} ha sido procesado vía ${data.method === "transfer" ? "transferencia bancaria" : "efectivo"}.`,
+            buildPayoutEmail(data)
+        );
     }
 
     // ─── OTP email ────────────────────────────────────────────────────────────
