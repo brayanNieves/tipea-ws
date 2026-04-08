@@ -2,9 +2,13 @@ import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { getFirestore } from "firebase-admin/firestore";
 import { mailer } from "./mailer_service";
+import type { Stripe as StripeClient } from "stripe";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const StripeLib = require("stripe") as new (key: string) => StripeClient;
 
 admin.initializeApp();
 const db = getFirestore();
+
 
 
 
@@ -691,4 +695,70 @@ export const verifyOtp = onRequest((req, res) => {
     console.log(`✅ [verifyOtp] OTP verified → ${email}`);
     res.json({ success: true, message: "Email verified successfully." });
   });
+});
+
+// ─────────────────────────────────────────────────────────────
+// createPaymentIntent
+// Crea un Stripe PaymentIntent para procesar el pago de un tip.
+//
+// Request:  { amount: number, targetUserId: string, currency?: string }
+//           amount en pesos dominicanos (ej: 500 = RD$500)
+//           currency por defecto "dop"
+// Response: { clientSecret: string, paymentIntentId: string }
+//
+// - Requiere autenticación Firebase
+// - Configura el secret via: firebase functions:secrets:set STRIPE_SECRET_KEY
+// ─────────────────────────────────────────────────────────────
+export const createPaymentIntent = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Debes iniciar sesión para realizar un pago.");
+  }
+
+  const { amount, targetUserId, currency = "dop" } = request.data as {
+    amount?: number;
+    targetUserId?: string;
+    currency?: string;
+  };
+
+  if (!amount || typeof amount !== "number" || amount <= 0) {
+    throw new HttpsError("invalid-argument", "El monto debe ser un número mayor a cero.");
+  }
+
+  if (!targetUserId) {
+    throw new HttpsError("invalid-argument", "targetUserId es requerido.");
+  }
+
+  const targetUserSnap = await db.doc(`users/${targetUserId}`).get();
+  if (!targetUserSnap.exists) {
+    throw new HttpsError("not-found", `Usuario ${targetUserId} no encontrado.`);
+  }
+
+  const stripeKey = process.env.STRIPE_SECRET_KEY;
+  if (!stripeKey) {
+    throw new HttpsError("internal", "Configuración de pagos no disponible.");
+  }
+
+  const stripe = new StripeLib(stripeKey);
+
+  // Stripe requiere el monto en la unidad más pequeña (centavos)
+  const amountInCents = Math.round(amount * 100);
+
+  const paymentIntent = await stripe.paymentIntents.create({
+    amount: amountInCents,
+    currency,
+    automatic_payment_methods: { enabled: true },
+    metadata: {
+      senderUid: request.auth.uid,
+      targetUserId,
+    },
+  });
+
+  console.log(
+    `✅ [createPaymentIntent] id=${paymentIntent.id} | from=${request.auth.uid} | to=${targetUserId} | amount=${amount} ${currency.toUpperCase()}`
+  );
+
+  return {
+    clientSecret: paymentIntent.client_secret,
+    paymentIntentId: paymentIntent.id,
+  };
 });
