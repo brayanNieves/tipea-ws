@@ -701,23 +701,22 @@ export const verifyOtp = onRequest((req, res) => {
 // createPaymentIntent
 // Crea un Stripe PaymentIntent para procesar el pago de un tip.
 //
-// Request:  { amount: number, targetUserId: string, currency?: string }
-//           amount en pesos dominicanos (ej: 500 = RD$500)
-//           currency por defecto "dop"
+// Request:  { amount: number, targetUserId: string }
+//           amount en pesos dominicanos enteros (ej: 500 = RD$500)
+//           La moneda siempre es DOP — no se acepta otra.
 // Response: { clientSecret: string, paymentIntentId: string }
 //
 // - Requiere autenticación Firebase
-// - Configura el secret via: firebase functions:secrets:set STRIPE_SECRET_KEY
+// - Lee STRIPE_SECRET_KEY desde .env
 // ─────────────────────────────────────────────────────────────
 export const createPaymentIntent = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Debes iniciar sesión para realizar un pago.");
   }
 
-  const { amount, targetUserId, currency = "dop" } = request.data as {
+  const { amount, targetUserId } = request.data as {
     amount?: number;
     targetUserId?: string;
-    currency?: string;
   };
 
   if (!amount || typeof amount !== "number" || amount <= 0) {
@@ -740,21 +739,23 @@ export const createPaymentIntent = onCall(async (request) => {
 
   const stripe = new StripeLib(stripeKey);
 
-  // Stripe requiere el monto en la unidad más pequeña (centavos)
-  const amountInCents = Math.round(amount * 100);
+  // El amount llega en pesos dominicanos (ej: 500 = RD$500).
+  // Stripe requiere la unidad mínima: centavos (1 peso = 100 centavos).
+  const amountInCentavos = Math.round(amount * 100);
 
   const paymentIntent = await stripe.paymentIntents.create({
-    amount: amountInCents,
-    currency,
+    amount: amountInCentavos,
+    currency: "dop",
     automatic_payment_methods: { enabled: true },
     metadata: {
       senderUid: request.auth.uid,
       targetUserId,
+      amountPesos: amount,
     },
   });
 
   console.log(
-    `✅ [createPaymentIntent] id=${paymentIntent.id} | from=${request.auth.uid} | to=${targetUserId} | amount=${amount} ${currency.toUpperCase()}`
+    `✅ [createPaymentIntent] id=${paymentIntent.id} | from=${request.auth.uid} | to=${targetUserId} | RD$${amount}`
   );
 
   return {
