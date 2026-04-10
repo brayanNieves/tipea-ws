@@ -44,6 +44,9 @@ function getYesterday(): string {
 // ─────────────────────────────────────────────────────────────
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { onCall, onRequest, HttpsError } from "firebase-functions/v2/https";
+import { defineSecret } from "firebase-functions/params";
+
+const stripeSecretKey = defineSecret("STRIPE_SECRET_KEY");
 import * as corsLib from "cors";
 
 const corsHandler = corsLib.default({ origin: true });
@@ -709,7 +712,7 @@ export const verifyOtp = onRequest((req, res) => {
 // - Requiere autenticación Firebase
 // - Lee STRIPE_SECRET_KEY desde .env
 // ─────────────────────────────────────────────────────────────
-export const createPaymentIntent = onCall(async (request) => {
+export const createPaymentIntent = onCall({ secrets: [stripeSecretKey] }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Debes iniciar sesión para realizar un pago.");
   }
@@ -732,9 +735,9 @@ export const createPaymentIntent = onCall(async (request) => {
     throw new HttpsError("not-found", `Usuario ${targetUserId} no encontrado.`);
   }
 
-  const stripeKey = process.env.STRIPE_SECRET_KEY;
+  const stripeKey = stripeSecretKey.value();
   if (!stripeKey) {
-    throw new HttpsError("internal", "Configuración de pagos no disponible.");
+    throw new HttpsError("failed-precondition", "Configuración de pagos no disponible.");
   }
 
   const stripe = new StripeLib(stripeKey);
@@ -743,23 +746,34 @@ export const createPaymentIntent = onCall(async (request) => {
   // Stripe requiere la unidad mínima: centavos (1 peso = 100 centavos).
   const amountInCentavos = Math.round(amount * 100);
 
-  const paymentIntent = await stripe.paymentIntents.create({
-    amount: amountInCentavos,
-    currency: "dop",
-    automatic_payment_methods: { enabled: true },
-    metadata: {
-      senderUid: request.auth.uid,
-      targetUserId,
-      amountPesos: amount,
-    },
-  });
+  try {
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: amountInCentavos,
+      currency: "dop",
+      automatic_payment_methods: { enabled: true },
+      metadata: {
+        senderUid: request.auth.uid,
+        targetUserId,
+        amountPesos: amount,
+      },
+    });
 
-  console.log(
-    `✅ [createPaymentIntent] id=${paymentIntent.id} | from=${request.auth.uid} | to=${targetUserId} | RD$${amount}`
-  );
+    console.log(
+      `✅ [createPaymentIntent] id=${paymentIntent.id} | from=${request.auth.uid} | to=${targetUserId} | RD$${amount}`
+    );
 
-  return {
-    clientSecret: paymentIntent.client_secret,
-    paymentIntentId: paymentIntent.id,
-  };
+    return {
+      clientSecret: paymentIntent.client_secret,
+      paymentIntentId: paymentIntent.id,
+    };
+  } catch (error) {
+    console.error("❌ [createPaymentIntent]", error);
+    await mailer.sendErrorMail(
+      `createPaymentIntent — from=${request.auth.uid} | to=${targetUserId} | RD$${amount}`,
+      error,
+      true
+    );
+    const message = error instanceof Error ? error.message : "No se pudo crear el intento de pago. Intenta nuevamente.";
+    throw new HttpsError("unknown", message);
+  }
 });
