@@ -8,6 +8,11 @@ ui-debug.log
 functions/node_modules/
 functions/lib/
 
+# Local test/debug scripts — may contain secrets, never commit
+functions/test.js
+functions/test_*.js
+functions/*.test.js
+
 # Environment
 .env
 .env.local
