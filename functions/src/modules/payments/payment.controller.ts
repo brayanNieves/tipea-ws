@@ -12,15 +12,16 @@ import { paymentConfigRepo } from "./payment-config.repository";
 // Request:  { amount: number, targetUserId: string }
 //           amount en pesos dominicanos (ej: 500 = RD$500).
 //
-// La moneda de cobro depende del flag `appConfig/payment.chargeInUsd`:
-//   - true  (default): convierte DOP → USD usando open.er-api.com
-//                       (cache 24h + fallback) y cobra en USD.
-//   - false:           cobra directamente en DOP, sin conversión.
+// Config (`appConfig/payment`):
+//   - chargeInUsd (bool, default true)
+//       true:  convierte DOP → USD con tipo de cambio (cache 24h) y cobra USD
+//       false: cobra directamente en DOP
+//   - feePct (number, default 7)
+//       fee de pasarela cobrado AL CLIENTE sobre el monto del tip.
+//       Cliente paga `amount * (1 + feePct/100)`.
+//       0 = sin fee.
 //
-// Response: { clientSecret: string, paymentIntentId: string }
-//
-// - Requiere autenticación Firebase
-// - Lee STRIPE_SECRET_KEY desde el secret manager
+// Response: { clientSecret, paymentIntentId }
 // ─────────────────────────────────────────────────────────────
 export const createPaymentIntent = onCall(
   { secrets: [stripeSecretKey] },
@@ -54,10 +55,14 @@ export const createPaymentIntent = onCall(
       throw new HttpsError("failed-precondition", "Configuración de pagos no disponible.");
     }
 
-    // Leer config (flag chargeInUsd). Default: true (cobra en USD).
-    const { chargeInUsd } = await paymentConfigRepo.read();
+    // Leer config (chargeInUsd + feePct).
+    const { chargeInUsd, feePct } = await paymentConfigRepo.read();
 
-    // Construir el payload del PaymentIntent según el modo.
+    // Aplicar fee de pasarela: cliente paga amount + feePct%.
+    const feeMultiplier = 1 + feePct / 100;
+    const amountWithFeeDop = amount * feeMultiplier;
+    const feeAmountDop = amountWithFeeDop - amount;
+
     let paymentIntentPayload: {
       amount: number;
       currency: "usd" | "dop";
@@ -67,9 +72,9 @@ export const createPaymentIntent = onCall(
     let logSuffix: string;
 
     if (chargeInUsd) {
-      // ── Modo USD: convertir DOP → USD ──────────────────────
+      // ── Modo USD: convertir DOP (con fee) → USD ────────────
       const { rate: dopRate, source: rateSource } = await getUsdToDopRate();
-      const amountUsd = amount / dopRate;
+      const amountUsd = amountWithFeeDop / dopRate;
       const amountInCents = Math.round(amountUsd * 100);
 
       // Stripe requiere mínimo US$0.50.
@@ -88,6 +93,9 @@ export const createPaymentIntent = onCall(
           senderUid: request.auth.uid,
           targetUserId,
           amountPesos: amount,
+          feePct: feePct.toString(),
+          feeAmount: feeAmountDop.toFixed(2),
+          totalChargedDop: amountWithFeeDop.toFixed(2),
           amountUsd: amountUsd.toFixed(2),
           dopRate: dopRate.toString(),
           rateSource,
@@ -95,10 +103,12 @@ export const createPaymentIntent = onCall(
         },
       };
 
-      logSuffix = `RD$${amount} → US$${amountUsd.toFixed(2)} (rate=${dopRate}, src=${rateSource})`;
+      logSuffix =
+        `RD$${amount} + ${feePct}% = RD$${amountWithFeeDop.toFixed(2)} ` +
+        `→ US$${amountUsd.toFixed(2)} (rate=${dopRate}, src=${rateSource})`;
     } else {
-      // ── Modo DOP: cobrar directo en pesos ──────────────────
-      const amountInCentavos = Math.round(amount * 100);
+      // ── Modo DOP: cobrar directo en pesos (con fee) ────────
+      const amountInCentavos = Math.round(amountWithFeeDop * 100);
 
       paymentIntentPayload = {
         amount: amountInCentavos,
@@ -108,11 +118,14 @@ export const createPaymentIntent = onCall(
           senderUid: request.auth.uid,
           targetUserId,
           amountPesos: amount,
+          feePct: feePct.toString(),
+          feeAmount: feeAmountDop.toFixed(2),
+          totalChargedDop: amountWithFeeDop.toFixed(2),
           chargeMode: "dop",
         },
       };
 
-      logSuffix = `RD$${amount} (charged in DOP)`;
+      logSuffix = `RD$${amount} + ${feePct}% = RD$${amountWithFeeDop.toFixed(2)} (charged in DOP)`;
     }
 
     try {
