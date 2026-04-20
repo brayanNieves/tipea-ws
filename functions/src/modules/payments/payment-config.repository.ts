@@ -19,8 +19,8 @@ export interface PaymentConfig {
 }
 
 const DEFAULT_CONFIG: PaymentConfig = {
-  chargeInUsd: true,
-  feePct: 7,
+  chargeInUsd: false,
+  feePct: 0,
 };
 
 export const paymentConfigRepo = {

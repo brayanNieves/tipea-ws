@@ -18,10 +18,24 @@ import { paymentConfigRepo } from "./payment-config.repository";
 //       false: cobra directamente en DOP
 //   - feePct (number, default 7)
 //       fee de pasarela cobrado AL CLIENTE sobre el monto del tip.
-//       Cliente paga `amount * (1 + feePct/100)`.
-//       0 = sin fee.
+//       Cliente paga `amount * (1 + feePct/100)`. 0 = sin fee.
 //
-// Response: { clientSecret, paymentIntentId }
+// Response shape:
+//   {
+//     clientSecret, paymentIntentId,
+//     amountPesos,        // tip original (DOP)
+//     feePct, feeAmount,  // fee aplicado
+//     totalChargedDop,    // total en DOP (tip + fee)
+//     displayAmount,      // monto a mostrar en Apple Pay / UI (en displayCurrency)
+//     displayCurrency,    // "USD" | "DOP"
+//     chargedCurrency,    // "usd" | "dop" — lo que Stripe cobra
+//     dopRate?, rateSource? // solo en modo USD
+//   }
+//
+// IMPORTANTE: el frontend DEBE usar `displayAmount` y `displayCurrency`
+// cuando arma el Apple Pay PaymentRequest, para que el monto mostrado
+// al usuario coincida con el que Stripe va a cobrar. De otro modo el
+// usuario firma por un monto y se le cobra otro.
 // ─────────────────────────────────────────────────────────────
 export const createPaymentIntent = onCall(
   { secrets: [stripeSecretKey] },
@@ -58,32 +72,45 @@ export const createPaymentIntent = onCall(
     // Leer config (chargeInUsd + feePct).
     const { chargeInUsd, feePct } = await paymentConfigRepo.read();
 
-    // Aplicar fee de pasarela: cliente paga amount + feePct%.
+    // Fee de pasarela: cliente paga amount + feePct%.
     const feeMultiplier = 1 + feePct / 100;
     const amountWithFeeDop = amount * feeMultiplier;
     const feeAmountDop = amountWithFeeDop - amount;
 
+    // Valores computados según el modo. Los declaramos up-front para
+    // poder devolverlos en la respuesta.
     let paymentIntentPayload: {
       amount: number;
       currency: "usd" | "dop";
       automatic_payment_methods: { enabled: true };
       metadata: Record<string, string | number>;
     };
+    let displayAmount: number;
+    let displayCurrency: "USD" | "DOP";
+    let chargedCurrency: "usd" | "dop";
+    let dopRate: number | null = null;
+    let rateSource: string | null = null;
+    let amountUsd: number | null = null;
     let logSuffix: string;
 
     if (chargeInUsd) {
       // ── Modo USD: convertir DOP (con fee) → USD ────────────
-      const { rate: dopRate, source: rateSource } = await getUsdToDopRate();
-      const amountUsd = amountWithFeeDop / dopRate;
+      const rateInfo = await getUsdToDopRate();
+      dopRate = rateInfo.rate;
+      rateSource = rateInfo.source;
+      amountUsd = amountWithFeeDop / dopRate;
       const amountInCents = Math.round(amountUsd * 100);
 
-      // Stripe requiere mínimo US$0.50.
       if (amountInCents < 50) {
         throw new HttpsError(
           "invalid-argument",
           `El monto convertido (US$${amountUsd.toFixed(2)}) está por debajo del mínimo permitido (US$0.50).`
         );
       }
+
+      displayAmount = Number(amountUsd.toFixed(2));
+      displayCurrency = "USD";
+      chargedCurrency = "usd";
 
       paymentIntentPayload = {
         amount: amountInCents,
@@ -109,6 +136,10 @@ export const createPaymentIntent = onCall(
     } else {
       // ── Modo DOP: cobrar directo en pesos (con fee) ────────
       const amountInCentavos = Math.round(amountWithFeeDop * 100);
+
+      displayAmount = Number(amountWithFeeDop.toFixed(2));
+      displayCurrency = "DOP";
+      chargedCurrency = "dop";
 
       paymentIntentPayload = {
         amount: amountInCentavos,
@@ -138,6 +169,19 @@ export const createPaymentIntent = onCall(
       return {
         clientSecret: paymentIntent.client_secret,
         paymentIntentId: paymentIntent.id,
+        // Monto original y fee (para mostrar desglose en la UI si se quiere)
+        amountPesos: amount,
+        feePct,
+        feeAmount: Number(feeAmountDop.toFixed(2)),
+        totalChargedDop: Number(amountWithFeeDop.toFixed(2)),
+        // Lo que el frontend DEBE pasar a Apple Pay / Stripe Elements
+        displayAmount,
+        displayCurrency,
+        chargedCurrency,
+        // Información de conversión (solo presente en modo USD)
+        amountUsd: amountUsd !== null ? Number(amountUsd.toFixed(2)) : null,
+        dopRate,
+        rateSource,
       };
     } catch (error) {
       console.error("❌ [createPaymentIntent]", error);
