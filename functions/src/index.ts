@@ -26,3 +26,6 @@ export { sendOtp, verifyOtp } from "./modules/auth/otp.controller";
 
 // Payments (Stripe)
 export { createPaymentIntent } from "./modules/payments/payment.controller";
+
+// Spotify
+export { searchTracks } from "./modules/spotify/spotify.controller";
