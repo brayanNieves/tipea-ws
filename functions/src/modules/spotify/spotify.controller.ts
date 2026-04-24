@@ -1,5 +1,7 @@
 import { onRequest } from "firebase-functions/v2/https";
+import { searchTracksApiKey } from "../../config/api-keys";
 import { spotifyClientId, spotifyClientSecret } from "../../config/spotify";
+import { requireApiKey } from "../../shared/auth/api-key";
 import { corsHandler } from "../../shared/utils/cors";
 import { searchTracks as searchTracksService } from "./spotify.service";
 
@@ -8,10 +10,13 @@ import { searchTracks as searchTracksService } from "./spotify.service";
 // cliente para evitar abuso de rate limit y mantener la credencial en el servidor.
 
 // ─────────────────────────────────────────────────────────────
-// searchTracks (HTTP endpoint)
+// searchTracks (HTTP endpoint, API-key protected)
 //
 // Searches Spotify's catalog for tracks matching a query. The
 // backend holds the Bearer token — clients never see it.
+//
+// Auth:
+//   Required header `x-api-key: <SEARCH_TRACKS_API_KEY>`
 //
 // Accepts:
 //   GET  /searchTracks?q=<query>&limit=<1..50>&offset=<n>&market=DO
@@ -22,17 +27,21 @@ import { searchTracks as searchTracksService } from "./spotify.service";
 //
 // Errors:
 //   400 missing/empty q
+//   401 missing x-api-key header
+//   403 invalid API key
 //   405 method not allowed
 //   502 upstream Spotify failure
 // ─────────────────────────────────────────────────────────────
 export const searchTracks = onRequest(
-  { secrets: [spotifyClientId, spotifyClientSecret] },
+  { secrets: [spotifyClientId, spotifyClientSecret, searchTracksApiKey] },
   (req, res) => {
     corsHandler(req, res, async () => {
       if (req.method !== "GET" && req.method !== "POST") {
         res.status(405).json({ error: "Method not allowed" });
         return;
       }
+
+      if (!requireApiKey(req, res, searchTracksApiKey.value())) return;
 
       const source = req.method === "GET" ? req.query : req.body ?? {};
       const q = typeof source.q === "string" ? source.q.trim() : "";
