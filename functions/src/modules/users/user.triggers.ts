@@ -7,8 +7,10 @@ import { mailer } from "../../mailer_service";
 // Fires when a new user registers via Firebase Auth.
 //
 // What it does:
-//   1. Creates their subscription record (Starter plan by default)
-//   2. Notifies the admin of the new signup
+//   1. Creates the user profile in `users/{uid}` with the data
+//      available from the Auth user (uid, email, displayName, etc.)
+//   2. Creates their subscription record (Starter plan by default)
+//   3. Notifies the admin of the new signup
 // ─────────────────────────────────────────────────────────────
 export const onUserCreated = functions.auth.user().onCreate(async (user) => {
   try {
@@ -16,6 +18,23 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
     renewalDate.setMonth(renewalDate.getMonth() + 1);
 
     const batch = db.batch();
+
+    // Build user profile payload only with fields we actually know.
+    // `merge: true` ensures we don't clobber a profile that another flow
+    // (e.g. sign-up form) may have created moments earlier.
+    const userPayload: Record<string, unknown> = {
+      uid: user.uid,
+      planId: "plan_starter",
+      active: true,
+      emailVerified: user.emailVerified ?? false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (user.email) userPayload.email = user.email;
+    if (user.displayName) userPayload.name = user.displayName;
+    if (user.phoneNumber) userPayload.phone = user.phoneNumber;
+
+    batch.set(db.doc(`users/${user.uid}`), userPayload, { merge: true });
 
     batch.set(db.doc(`subscriptions/${user.uid}`), {
       userId: user.uid,
