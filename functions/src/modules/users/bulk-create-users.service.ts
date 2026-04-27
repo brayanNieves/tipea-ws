@@ -97,13 +97,14 @@ async function createOne(
   const password = validated.value.password ?? generatePassword();
 
   // Step 1: Firebase Auth (this stores the password securely; we never persist it ourselves)
+  // Note: phoneNumber NOT passed to Firebase Auth — it requires strict E.164.
+  // The phone is saved only to the Firestore profile below, where format is flexible.
   let uid: string;
   try {
     const authUser = await admin.auth().createUser({
       email,
       password,
       displayName: name,
-      ...(phone ? { phoneNumber: phone } : {}),
       emailVerified: false,
       disabled: false,
     });
