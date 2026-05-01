@@ -37,6 +37,7 @@ Documentación de los endpoints de Cloud Functions disponibles para el frontend.
 | [`verifyOtp`](#verifyotp) | `onRequest` (POST) | Pública | Verificar el código OTP |
 | [`searchTracks`](#searchtracks) | `onRequest` (GET/POST) | API key | Buscar canciones en Spotify |
 | [`bulkCreateUsers`](#bulkcreateusers) | `onCall` | Admin | Crear varios usuarios de Firebase Auth en una sola llamada |
+| [`changeUserEmail`](#changeuseremail) | `onRequest` (POST) | Admin | Cambiar email y/o password de un usuario directamente (admin override) |
 
 ---
 
@@ -420,6 +421,86 @@ await admin.auth().updateUser(uid, { password: "NuevoTemp1234" });
 
 ---
 
+## changeUserEmail
+
+Cambia el email y/o el password de un usuario **directamente** vía Firebase Admin SDK. **No verifica** el password actual — está pensado para flujos administrativos (recuperar acceso a cuentas creadas con `bulkCreateUsers`, resetear credenciales perdidas, etc.).
+
+### Auth
+
+- Header `Authorization: Bearer <ID_TOKEN>` con un Firebase ID token válido
+- El user dueño de ese token debe tener `role: "admin"` en su doc `users/{uid}`
+
+### Request
+
+```js
+const idToken = await firebase.auth().currentUser.getIdToken();
+
+await fetch("https://us-central1-styleapp-1e840.cloudfunctions.net/changeUserEmail", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${idToken}`,
+  },
+  body: JSON.stringify({
+    email: "j_001@tipapp.tech",         // OBLIGATORIO — email actual del user a modificar
+    newEmail: "juan.real@gmail.com",     // OPCIONAL
+    newPassword: "NuevoPassword1234",    // OPCIONAL
+  }),
+});
+```
+
+| Campo | Obligatorio | Notas |
+|---|---|---|
+| `email` | ✅ | email **actual** del user objetivo (sirve para encontrarlo en Auth) |
+| `newEmail` | ❌* | nuevo email. Formato válido y distinto del actual |
+| `newPassword` | ❌* | nuevo password. Min 6 chars |
+
+\* Al menos uno de `newEmail` o `newPassword` es obligatorio.
+
+### Response (éxito, 200)
+
+```json
+{
+  "success": true,
+  "uid": "abc123def456",
+  "updated": {
+    "email": true,
+    "password": true
+  }
+}
+```
+
+Si solo cambiaste uno de los dos, el otro flag viene en `false`:
+
+```json
+{
+  "success": true,
+  "uid": "abc123",
+  "updated": { "email": false, "password": true }
+}
+```
+
+### Comportamiento secundario
+
+- Si cambia el email → `emailVerified` se setea en `false` (tanto en Auth como en Firestore)
+- El doc `users/{uid}` se sincroniza con el nuevo email
+- Si cambia solo password → no se toca Firestore (el password vive solo en Auth)
+- Si Firestore falla pero Auth ya se actualizó, la response trae un `warning` extra en lugar de error
+
+### Errores
+
+| HTTP code | Cuándo |
+|---|---|
+| 400 | Datos inválidos, o no mandaste ni `newEmail` ni `newPassword`, o `newEmail` igual al actual |
+| 401 | Falta header `Authorization`, formato inválido, o token expirado |
+| 403 | El caller no tiene `role: "admin"` |
+| 404 | El `email` enviado no existe en Firebase Auth |
+| 405 | Método distinto a POST |
+| 409 | `newEmail` ya lo usa otra cuenta |
+| 500 | Error inesperado |
+
+---
+
 ## Esquemas de datos relevantes
 
 ### `users/{uid}` (Firestore)
@@ -578,6 +659,49 @@ export const bulkCreateUsers = httpsCallable<
     >;
   }
 >(functions, "bulkCreateUsers");
+```
+
+```ts
+// api/admin-users.ts (changeUserEmail no es callable, va por fetch)
+import { auth } from "./firebase-config";
+
+interface UpdateCredentialsInput {
+  email: string;
+  newEmail?: string;
+  newPassword?: string;
+}
+
+interface UpdateCredentialsResult {
+  success: true;
+  uid: string;
+  updated: { email: boolean; password: boolean };
+  warning?: string;
+}
+
+const CHANGE_EMAIL_URL =
+  "https://us-central1-styleapp-1e840.cloudfunctions.net/changeUserEmail";
+
+export async function changeUserEmail(
+  input: UpdateCredentialsInput
+): Promise<UpdateCredentialsResult> {
+  const idToken = await auth.currentUser?.getIdToken();
+  if (!idToken) throw new Error("Debes estar logueado.");
+
+  const res = await fetch(CHANGE_EMAIL_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify(input),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json();
+}
 ```
 
 ---

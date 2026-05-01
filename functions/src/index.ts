@@ -18,6 +18,7 @@ export { onPayoutCreated } from "./modules/payouts/payout.triggers";
 // Users
 export { onUserCreated } from "./modules/users/user.triggers";
 export { bulkCreateUsersFn as bulkCreateUsers } from "./modules/users/bulk-create-users.controller";
+export { changeUserEmail } from "./modules/users/change-email.controller";
 
 // Summaries / scheduled jobs
 export { onDayRollover } from "./modules/summaries/summary.jobs";
