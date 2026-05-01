@@ -425,6 +425,8 @@ await admin.auth().updateUser(uid, { password: "NuevoTemp1234" });
 
 Cambia el email y/o el password de un usuario **directamente** vía Firebase Admin SDK. **No verifica** el password actual — está pensado para flujos administrativos (recuperar acceso a cuentas creadas con `bulkCreateUsers`, resetear credenciales perdidas, etc.).
 
+> 📘 **Guía completa con ejemplos en React, helpers TypeScript, manejo de errores y cURL:** [`CHANGE_USER_EMAIL.md`](CHANGE_USER_EMAIL.md)
+
 ### Auth
 
 - Header `Authorization: Bearer <ID_TOKEN>` con un Firebase ID token válido

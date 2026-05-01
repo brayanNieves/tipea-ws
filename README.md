@@ -120,33 +120,82 @@ npx ts-node src/seed.ts
 Download your service account key from:
 Firebase Console → Project Settings → Service Accounts → Generate new private key
 
-### 6. Deploy everything
+### 6. Deploy
+
+#### Build (siempre antes de deployar)
 
 ```bash
-# From the root of the project
+cd functions && npm run build && cd ..
+```
+
+#### Deployar todo
+
+```bash
 firebase deploy
 ```
 
-Or deploy individually:
+#### Deployar por componente
+
+| Quiero deployar... | Comando |
+|---|---|
+| Todas las Cloud Functions | `firebase deploy --only functions` |
+| Reglas de Firestore | `firebase deploy --only firestore:rules` |
+| Índices de Firestore | `firebase deploy --only firestore:indexes` |
+| Reglas de Storage | `firebase deploy --only storage` |
+
+#### Deployar una Cloud Function individual
 
 ```bash
-firebase deploy --only firestore:rules
-firebase deploy --only firestore:indexes
-firebase deploy --only storage
-firebase deploy --only functions
+# Tips
 firebase deploy --only functions:onTipCreated
-firebase deploy --only functions:onPayoutCreated
-firebase deploy --only functions:onUserCreated
-firebase deploy --only functions:onDayRollover
 firebase deploy --only functions:createTip
-firebase deploy --only functions:onTipCreated,functions:onPayoutCreated,functions:onUserCreated,functions:onDayRollover,functions:createTip
-firebase deploy --only functions:onTipCreated --debug 2>&1 | tail -50
-rm -rf lib && npm run build && firebase deploy --only functions:onTipCreated,functions:onPayoutCreated,functions:onUserCreated,functions:onDayRollover,functions:createTip
-cd functions && npx tsc --noEmit
+
+# Payouts
+firebase deploy --only functions:onPayoutCreated
+
+# Users
+firebase deploy --only functions:onUserCreated
+firebase deploy --only functions:bulkCreateUsers
+firebase deploy --only functions:changeUserEmail
+
+# Summaries / cron
+firebase deploy --only functions:onDayRollover
+
+# Auth / OTP
+firebase deploy --only functions:sendOtp
+firebase deploy --only functions:verifyOtp
+
+# Payments (Stripe)
+firebase deploy --only functions:createPaymentIntent
+
+# Spotify
+firebase deploy --only functions:searchTracks
 ```
 
-firebase fi
-restore:databases:list --project styleapp-1e840
+#### Deployar varias a la vez
+
+```bash
+firebase deploy --only functions:createPaymentIntent,functions:onTipCreated
+```
+
+#### Build limpio + deploy (si hay caché raro)
+
+```bash
+cd functions && rm -rf lib && npm run build && cd ..
+firebase deploy --only functions:createPaymentIntent
+```
+
+#### Ver logs de una función después del deploy
+
+```bash
+firebase functions:log --only createPaymentIntent --since 5m
+```
+
+#### Borrar una Cloud Function ya deployada
+
+```bash
+firebase functions:delete <nombre> --region us-central1
+```
 
 ---
 
@@ -167,14 +216,38 @@ Customer scans QR
 
 ---
 
-## Environment Variables
+## Secrets
 
-No environment variables are needed for the base setup.
-If you add Stripe later, set:
+Los secretos viven en **Google Cloud Secret Manager**, no en `.env` ni en `functions:config`. Detalle completo en [`functions/SECRETS.md`](functions/SECRETS.md).
+
+| Secret | Usado por |
+|---|---|
+| `STRIPE_SECRET_KEY` | `createPaymentIntent` |
+| `SPOTIFY_CLIENT_ID` | `searchTracks` |
+| `SPOTIFY_CLIENT_SECRET` | `searchTracks` |
+| `SEARCH_TRACKS_API_KEY` | `searchTracks` (api-key del cliente) |
+
+Setear/rotar:
 
 ```bash
-firebase functions:config:set stripe.secret="sk_live_..."
+firebase functions:secrets:set STRIPE_SECRET_KEY
+# pega el valor cuando pregunte; después redeploy de la función que lo usa
 ```
+
+Ver lista o valor:
+
+```bash
+firebase functions:secrets:list
+firebase functions:secrets:access STRIPE_SECRET_KEY
+```
+
+---
+
+## Documentación
+
+- 📘 [`functions/API.md`](functions/API.md) — referencia de todos los endpoints (request/response/errores)
+- 🔑 [`functions/SECRETS.md`](functions/SECRETS.md) — gestión de secretos
+- 👤 [`functions/CHANGE_USER_EMAIL.md`](functions/CHANGE_USER_EMAIL.md) — guía de integración del endpoint admin de cambio de credenciales
 
 ---
 
