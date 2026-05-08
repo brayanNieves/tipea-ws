@@ -4,6 +4,7 @@ import { buildStripeClient, stripeSecretKey } from "../../config/stripe";
 import { mailer } from "../../mailer_service";
 import { getUsdToDopRate } from "./exchange-rate.service";
 import { paymentConfigRepo } from "./payment-config.repository";
+import { SERVICE_FEE_PCT, calculateServiceFee, calculateTotalCharge } from "./service-fee";
 
 // ─────────────────────────────────────────────────────────────
 // createPaymentIntent
@@ -69,13 +70,11 @@ export const createPaymentIntent = onCall(
       throw new HttpsError("failed-precondition", "Configuración de pagos no disponible.");
     }
 
-    // Leer config (chargeInUsd + feePct).
-    const { chargeInUsd, feePct } = await paymentConfigRepo.read();
-
-    // Fee de pasarela: cliente paga amount + feePct%.
-    const feeMultiplier = 1 + feePct / 100;
-    const amountWithFeeDop = amount * feeMultiplier;
-    const feeAmountDop = amountWithFeeDop - amount;
+    // chargeInUsd from config; service fee is a hardcoded constant (see service-fee.ts).
+    const { chargeInUsd } = await paymentConfigRepo.read();
+    const feePct = SERVICE_FEE_PCT;
+    const feeAmountDop = calculateServiceFee(amount);
+    const amountWithFeeDop = calculateTotalCharge(amount);
 
     // Valores computados según el modo. Los declaramos up-front para
     // poder devolverlos en la respuesta.

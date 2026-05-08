@@ -11,9 +11,9 @@ export interface PaymentConfig {
   chargeInUsd: boolean;
 
   /**
-   * Gateway fee percentage charged ON TOP of the tip amount.
-   * The customer pays `amount * (1 + feePct/100)`. Default: 7.
-   * Valid range: [0, 100). Invalid values fall back to default.
+   * @deprecated No longer read by `payment.controller.ts`. The customer-facing
+   * service fee is now hardcoded as `SERVICE_FEE_PCT` in `service-fee.ts`.
+   * Field kept for back-compat with any existing Firestore docs.
    */
   feePct: number;
 }

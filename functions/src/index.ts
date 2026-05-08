@@ -29,5 +29,25 @@ export { sendOtp, verifyOtp } from "./modules/auth/otp.controller";
 // Payments (Stripe)
 export { createPaymentIntent } from "./modules/payments/payment.controller";
 
+// Customer balances / top-ups (legacy phone-based flow — kept for back-compat)
+export {
+  lookupBalance,
+  createTopupIntent,
+  confirmTopup,
+  tipFromBalance,
+} from "./modules/balances/balance.controller";
+
+// Hybrid wallet (anonymous-UID-keyed, drives the onboarding-after-N-tips flow)
+export {
+  getTipper,
+  markOnboardingSeen,
+  sendWalletOtp,
+  verifyWalletOtp,
+  createWalletTopupIntent,
+  confirmWalletTopup,
+  tipFromWallet,
+  logWalletEvent,
+} from "./modules/tippers/tipper.controller";
+
 // Spotify
 export { searchTracks } from "./modules/spotify/spotify.controller";

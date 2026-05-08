@@ -3,20 +3,35 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ── users ──────────────────────────────────────────────
-    // Each user can only read/write their own document
+    // Read: any authenticated user (including anonymous customers scanning a
+    //   QR) — needed to display the staff's name/role/photo on the tip page.
+    //   Heads-up: this exposes the full staff doc, including email/phone and
+    //   the bank-account block (only `accountNumberLast4` is plaintext; the
+    //   full account number is encrypted at rest by the bulk-create flow).
+    //   For a stricter posture, denormalize a `/staff_public/{userId}` doc
+    //   with non-sensitive fields and lock /users back down to self-only.
+    // Update: still self-only.
     match /users/{userId} {
-      allow read, update: if request.auth != null && request.auth.uid == userId;
+      allow read: if request.auth != null;
+      allow update: if request.auth != null && request.auth.uid == userId;
       allow create: if request.auth != null;
       allow delete: if false;
     }
 
     // ── tips ───────────────────────────────────────────────
     // Any authenticated user can create a tip (QR scan)
-    // Only the tip owner can read it
-    // Updates/deletes only via Cloud Functions
+    // Read allowed for the recipient (staff) OR the sender (customer who
+    //   created it — needed for the song-request status listener).
+    // Updates/deletes only via Cloud Functions.
+    // Clients MUST NOT set paidFromBalance: true — that path is callable-only
+    // (tipFromBalance), which writes via the admin SDK and bypasses these rules.
     match /tips/{tipId} {
-      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
-      allow create: if request.auth != null;
+      allow read: if request.auth != null && (
+        request.auth.uid == resource.data.userId ||
+        request.auth.uid == resource.data.get('senderUid', '')
+      );
+      allow create: if request.auth != null
+        && request.resource.data.get('paidFromBalance', false) == false;
       allow update, delete: if false;
     }
 
@@ -70,6 +85,46 @@ service cloud.firestore {
     match /notifications/{notifId} {
       allow read, update: if request.auth != null && request.auth.token.admin == true;
       allow write: if false;
+    }
+
+    // ── balances ──────────────────────────────────────────
+    // Customer balance is callable-only (lookupBalance / confirmTopup /
+    // tipFromBalance). Block all direct client access.
+    match /balances/{customerId} {
+      allow read, write: if false;
+    }
+
+    // ── topups ────────────────────────────────────────────
+    // Append-only ledger written exclusively by confirmTopup callable.
+    match /topups/{topupId} {
+      allow read, write: if false;
+    }
+
+    // ── tippers ──────────────────────────────────────────
+    // Per-uid wallet + onboarding state. Callable-only (getTipper /
+    // markOnboardingSeen / createWalletTopupIntent / confirmWalletTopup /
+    // tipFromWallet). Block direct client access — even reads, since the
+    // wallet balance must reflect the latest atomic transaction state.
+    match /tippers/{uid} {
+      allow read, write: if false;
+    }
+
+    // ── wallet_events ────────────────────────────────────
+    // Append-only analytics ledger. Callable-only writes; admin-only reads.
+    match /wallet_events/{eventId} {
+      allow read: if request.auth != null && request.auth.token.admin == true;
+      allow write: if false;
+    }
+
+    // ── email-verification mappings ───────────────────────
+    // Both written exclusively by `verifyWalletOtp` callable (admin SDK).
+    // /uid_to_canon_email/{uid} — proves a uid has verified an email.
+    // /email_canon_uid/{emailHash} — first verifier of an email becomes its canonical wallet owner.
+    match /uid_to_canon_email/{uid} {
+      allow read, write: if false;
+    }
+    match /email_canon_uid/{emailHash} {
+      allow read, write: if false;
     }
   }
 }

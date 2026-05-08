@@ -4,6 +4,7 @@ import { mailer } from "../../mailer_service";
 import { getToday } from "../../shared/utils/date";
 import { calculateCommission } from "./tip.service";
 import { evaluateTip } from "./suspicion.service";
+import { tipperRepo } from "../tippers/tipper.repository";
 
 // ─────────────────────────────────────────────────────────────
 // onTipCreated
@@ -46,6 +47,8 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
     if (!plan) throw new Error(`Plan not found: ${user.planId}`);
 
     // ── 4. Calculate commission and net amount ───────────────
+    // tip.amount is the original tip (commission base) — does NOT include the
+    // customer-paid service fee (see tip.serviceFeeAmount / totalChargedAmount).
     const { commissionPct, commissionAmt, netAmount } = calculateCommission(
       tip.amount,
       plan.commissionPct ?? 0
@@ -117,6 +120,13 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
     }
 
     await batch.commit();
+
+    // ── 5b. Update /tippers counter (drives wallet onboarding trigger) ──
+    if (tip.senderUid && typeof tip.senderUid === "string") {
+      await tipperRepo.recordTip(tip.senderUid, tip.amount).catch((e) => {
+        console.error("[onTipCreated] tipperRepo.recordTip failed (non-fatal)", e);
+      });
+    }
 
     // ── 6. Run counter transactions in parallel ──────────────
     await Promise.all([
