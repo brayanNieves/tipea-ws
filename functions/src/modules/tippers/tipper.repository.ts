@@ -76,13 +76,24 @@ export const tipperRepo = {
   /**
    * Atomically credit walletBalance from a Stripe top-up. Idempotent on
    * `paymentIntentId` via the /topups dedup query.
+   *
+   * `ledger` (optional) records the Stripe fees TipApp absorbed. When
+   * present it's written to /topups so analytics can compute loss-leader
+   * burn without joining against Stripe. Always populated by the new
+   * `confirmWalletTopup` callable; older callers can omit it.
    */
   async credit(args: {
     uid: string;
     amount: number;
     paymentIntentId: string;
+    ledger?: {
+      stripeProcessingFee: number;
+      stripeConversionFee: number;
+      tipappCost: number;
+      exchangeRate: number;
+    };
   }): Promise<{ balance: number; alreadyApplied: boolean }> {
-    const { uid, amount, paymentIntentId } = args;
+    const { uid, amount, paymentIntentId, ledger } = args;
     const ref = tippersCol().doc(uid);
 
     return db.runTransaction(async (tx) => {
@@ -122,8 +133,16 @@ export const tipperRepo = {
       tx.set(topupRef, {
         customerId: uid,                 // re-uses existing /topups schema; uid acts as customer
         grossAmount: amount,
-        stripeFee: null,
-        netAmount: amount,
+        stripeFee: ledger?.tipappCost ?? null,        // back-compat scalar field
+        netAmount: amount,                            // visible == credit (loss-leader)
+        ...(ledger
+          ? {
+              stripeProcessingFee: ledger.stripeProcessingFee,
+              stripeConversionFee: ledger.stripeConversionFee,
+              tipappCost: ledger.tipappCost,
+              exchangeRate: ledger.exchangeRate,
+            }
+          : {}),
         createdAt: now,
         stripePaymentIntentId: paymentIntentId,
       });

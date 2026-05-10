@@ -4,6 +4,7 @@ import { buildStripeClient, stripeSecretKey } from "../../config/stripe";
 import { tipperRepo } from "./tipper.repository";
 import { recordEmailVerification, resolveCanonUid } from "./email-link";
 import { checkOtp, isValidEmail, normalizeEmail, requestOtp } from "../auth/otp.service";
+import { planCommissionFraction, pricingService } from "../pricing/pricing.service";
 
 const MIN_WALLET_TOPUP_DOP = 200;
 
@@ -256,7 +257,27 @@ export const confirmWalletTopup = onCall(
       throw new HttpsError("failed-precondition", "PaymentIntent amount mismatch.");
     }
 
-    const result = await tipperRepo.credit({ uid: canonUid, amount, paymentIntentId });
+    // Compute the loss-leader ledger: visible == credit, so TipApp eats
+    // Stripe's processing + conversion fees on every top-up. Stored on
+    // /topups so analytics can surface the burn rate without joining
+    // against Stripe.
+    const topupBreakdown = await pricingService.breakdownFor(
+      amount,
+      "card",
+      intent.currency === "dop" ? "dop" : "usd"
+    );
+
+    const result = await tipperRepo.credit({
+      uid: canonUid,
+      amount,
+      paymentIntentId,
+      ledger: {
+        stripeProcessingFee: topupBreakdown.stripeProcessingFee,
+        stripeConversionFee: topupBreakdown.stripeConversionFee,
+        tipappCost: topupBreakdown.totalProcessingCost,
+        exchangeRate: topupBreakdown.exchangeRate,
+      },
+    });
 
     if (!result.alreadyApplied) {
       tipperRepo
@@ -301,11 +322,32 @@ export const tipFromWallet = onCall(async (request) => {
 
   const canonUid = await requireVerifiedEmail(request.auth.uid, email);
 
-  // Verify staff exists before debiting to avoid wasted writes.
+  // Verify staff exists before debiting to avoid wasted writes. Resolve
+  // their plan rate so the pricing engine applies the same commission
+  // tier (Starter 7% / Pro 4% / Business 2%) the trigger would have.
   const staffSnap = await db.doc(`users/${staffId}`).get();
   if (!staffSnap.exists) {
     throw new HttpsError("not-found", `Staff ${staffId} not found.`);
   }
+  const staffData = staffSnap.data() ?? {};
+  const staffPlanId = (staffData as { planId?: string }).planId;
+  let staffPlanCommissionPct: number | null = null;
+  if (staffPlanId) {
+    const planSnap = await db.doc(`plans/${staffPlanId}`).get();
+    const planData = planSnap.data() as { commissionPct?: number } | undefined;
+    if (typeof planData?.commissionPct === "number") {
+      staffPlanCommissionPct = planData.commissionPct;
+    }
+  }
+
+  // Compute the wallet pricing breakdown (no Stripe fees on this row;
+  // the top-up already absorbed them).
+  const walletPricing = await pricingService.breakdownFor(
+    amount,
+    "wallet",
+    "dop",
+    planCommissionFraction(staffPlanCommissionPct)
+  );
 
   try {
     const result = await tipperRepo.debitAndCreateTip({
@@ -325,6 +367,7 @@ export const tipFromWallet = onCall(async (request) => {
           payoutId: null,
           stripePaymentIntentId: null,
           paymentMethod: "wallet",
+          pricing: walletPricing,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
           songRequest: songRequest ?? null,
           rating: rating ?? null,

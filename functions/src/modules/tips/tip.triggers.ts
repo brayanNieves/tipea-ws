@@ -5,21 +5,88 @@ import { getToday } from "../../shared/utils/date";
 import { calculateCommission } from "./tip.service";
 import { evaluateTip } from "./suspicion.service";
 import { tipperRepo } from "../tippers/tipper.repository";
+import { planCommissionFraction, pricingService } from "../pricing/pricing.service";
+import type {
+  TipPricingLedger,
+  TipPricingPaymentMethod,
+} from "../../types";
+
+/**
+ * Resolve the commission/net values + the pricing ledger for a tip.
+ *
+ * Three cases:
+ *   1. Tip already has a `pricing` block (wallet path, or direct path when
+ *      the FE attached the engine output from `createPaymentIntent`) →
+ *      use it as-is. Its `platformFee` already reflects the staff's plan
+ *      tier because the upstream callable resolved it.
+ *   2. Tip lacks `pricing` but is recent → compute one using the staff's
+ *      `plan.commissionPct` and write it back so /tips is uniform.
+ *   3. Pricing engine itself errors → fall back to the legacy
+ *      `calculateCommission(amount, plan.commissionPct)` path so the tip
+ *      still settles with the right rate. Should never trigger in practice.
+ */
+async function resolvePricing(tip: FirebaseFirestore.DocumentData, planCommissionPct: number) {
+  const existing = tip.pricing as TipPricingLedger | undefined;
+  if (existing && typeof existing.platformFee === "number" && typeof existing.staffNet === "number") {
+    const commissionPct = existing.visibleAmount > 0
+      ? Math.round((existing.platformFee / existing.visibleAmount) * 1000) / 10
+      : planCommissionPct;
+    return {
+      commissionPct,
+      commissionAmt: existing.platformFee,
+      netAmount: existing.staffNet,
+      pricing: existing,
+      computed: false,
+    };
+  }
+
+  // No ledger yet — derive payment method from tip flags.
+  const paymentMethod: TipPricingPaymentMethod = tip.paidFromWallet
+    ? "wallet"
+    : tip.paymentMethod === "apple_pay" || tip.paymentMethod === "google_pay"
+      ? tip.paymentMethod
+      : "card";
+  const chargedCurrency = tip.paidFromWallet ? "dop" : "usd";
+
+  try {
+    const pricing = await pricingService.breakdownFor(
+      tip.amount,
+      paymentMethod,
+      chargedCurrency,
+      planCommissionFraction(planCommissionPct)
+    );
+    return {
+      commissionPct: planCommissionPct,
+      commissionAmt: pricing.platformFee,
+      netAmount: pricing.staffNet,
+      pricing,
+      computed: true,
+    };
+  } catch (err) {
+    // True last-resort: fall back to plan-based math so the tip still
+    // settles. Surfaces a log line so we know to investigate.
+    console.warn(
+      `[onTipCreated] pricing engine failed; falling back to plan.commissionPct=${planCommissionPct}`,
+      err
+    );
+    const legacy = calculateCommission(tip.amount, planCommissionPct ?? 0);
+    return { ...legacy, pricing: undefined as TipPricingLedger | undefined, computed: false };
+  }
+}
 
 // ─────────────────────────────────────────────────────────────
 // onTipCreated
-// Fires every time a new document is created in /tips
+// Fires every time a new document is created in /tips.
 //
 // What it does:
-//   1. Fetches the user's active plan
-//   2. Calculates commission and net amount
-//   3. Detects suspicious activity
-//   4. Updates the tip document with those values
-//   5. Creates a record in /commissions (income log)
-//   6. Updates /daily_summaries (platform-wide dashboard)
-//   7. Updates /user_daily_stats (per-user leaderboard)
-//   8. Creates admin notifications
-//   9. Sends staff email if user.emailVerified
+//   1. Resolves the pricing ledger (existing or computed via engine)
+//   2. Detects suspicious activity
+//   3. Updates the tip with pricing + commission/net + status
+//   4. Creates a /commissions record
+//   5. Updates /daily_summaries + /user_daily_stats
+//   6. Creates admin notifications
+//   7. Sends staff email if user.emailVerified
+//   8. Bumps /tippers counters via tipperRepo.recordTip
 // ─────────────────────────────────────────────────────────────
 export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, async (event) => {
   const snap = event.data;
@@ -41,16 +108,17 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
     if (!user) throw new Error(`User not found: ${tip.userId}`);
     const emailVerified = user?.emailVerified ?? false;
 
-    // ── 3. Fetch user's active plan ──────────────────────────
+    // ── 3. Fetch user's active plan (still needed for staff email) ──
     const planSnap = await db.doc(`plans/${user.planId}`).get();
     const plan = planSnap.data();
     if (!plan) throw new Error(`Plan not found: ${user.planId}`);
 
-    // ── 4. Calculate commission and net amount ───────────────
-    // tip.amount is the original tip (commission base) — does NOT include the
-    // customer-paid service fee (see tip.serviceFeeAmount / totalChargedAmount).
-    const { commissionPct, commissionAmt, netAmount } = calculateCommission(
-      tip.amount,
+    // ── 4. Resolve commission via the pricing engine ─────────
+    // Prefers the tip's pre-attached `pricing` block; falls back to
+    // computing one (and ultimately to plan.commissionPct if the engine
+    // itself can't run).
+    const { commissionPct, commissionAmt, netAmount, pricing, computed } = await resolvePricing(
+      tip,
       plan.commissionPct ?? 0
     );
 
@@ -66,7 +134,7 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
     const statsRef = db.doc(`user_daily_stats/${tip.userId}_${today}`);
     const batch = db.batch();
 
-    batch.update(snap.ref, {
+    const tipUpdate: Record<string, unknown> = {
       commissionPct,
       commissionAmt,
       netAmount,
@@ -75,7 +143,11 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
       suspicious: isSuspicious,
       suspicionReasons: isSuspicious ? suspicionReasons : [],
       suspicionReviewed: false,
-    });
+    };
+    // Persist the pricing block so /tips is uniform regardless of which
+    // path created the doc.
+    if (computed && pricing) tipUpdate.pricing = pricing;
+    batch.update(snap.ref, tipUpdate);
 
     const commissionRef = db.collection("commissions").doc();
     batch.set(commissionRef, {
@@ -210,6 +282,7 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
     console.log(
       `✅ [onTipCreated] tipId=${tipId} | user=${user.name} | ` +
         `gross=$${tip.amount} | commission=$${commissionAmt} | net=$${netAmount} | ` +
+        `pricingSrc=${pricing ? (computed ? "computed" : "attached") : "legacy-plan"} | ` +
         `suspicious=${isSuspicious}`
     );
 

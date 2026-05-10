@@ -47,12 +47,40 @@ export interface Plan {
 export type TipStatus = "pending" | "paid";
 export type TipSource = "qr" | "manual";
 
+// Per-transaction pricing ledger written by the pricing engine. Lets us
+// audit profitability without re-running the math. Optional on `Tip` because
+// tips created before the pricing engine rolled out won't have it; the
+// `onTipCreated` trigger falls back to plan-based commissions in that case.
+export type TipPricingPaymentMethod =
+  | "card"
+  | "apple_pay"
+  | "google_pay"
+  | "wallet"
+  | "dev";
+
+export type TipPricingCurrency = "dop" | "usd";
+
+export interface TipPricingLedger {
+  visibleAmount: number;           // DOP — what the customer pays / sees
+  stripeProcessingFee: number;     // DOP — Stripe's 2.9% + $0.30 slice
+  stripeConversionFee: number;     // DOP — Stripe's 1% FX slice (0 if charged in DOP)
+  platformFee: number;             // DOP — TipApp's commission (PLATFORM_FEE_PCT × visible)
+  marginSafety: number;            // DOP — FX volatility buffer
+  staffNet: number;                // DOP — visible − stripe − platformFee − margin
+  totalProcessingCost: number;     // DOP — stripeProcessingFee + stripeConversionFee
+  profitability: number;           // DOP — platformFee + marginSafety
+  exchangeRate: number;            // DOP per USD used in the calc
+  currency: TipPricingCurrency;
+  paymentMethod: TipPricingPaymentMethod;
+  walletUsed: boolean;             // true when paid from wallet (no Stripe at tip time)
+}
+
 export interface Tip {
   userId: string;                  // staff (recipient) UID
   senderUid?: string;              // anonymous customer Firebase UID — drives /tippers counters
   amount: number;                  // original tip — commission base, excludes service fee
-  serviceFeeAmount?: number;       // fee paid by customer on top of tip (DOP) — direct-pay path
-  totalChargedAmount?: number;     // tip + fee — what Stripe charged customer (DOP) — direct-pay path
+  serviceFeeAmount?: number;       // legacy: fee paid by customer on top of tip (DOP) — direct-pay path
+  totalChargedAmount?: number;     // legacy: tip + fee — what Stripe charged customer (DOP) — direct-pay path
   customerId?: string;             // legacy: hashed phone — present when paid from /balances (deprecated path)
   paidFromBalance?: boolean;       // legacy /balances path — kept for back-compat
   paidFromWallet?: boolean;        // true when debited from /tippers/{senderUid}.walletBalance
@@ -63,6 +91,7 @@ export interface Tip {
   status: TipStatus;
   payoutId: string | null;
   createdAt: admin.firestore.Timestamp;
+  pricing?: TipPricingLedger;      // populated for tips created post-pricing-engine rollout
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -79,11 +108,20 @@ export interface Balance {
 }
 
 // Append-only ledger of every successful top-up.
+//
+// `tipappCost` is the loss-leader signal: visible == credit, so TipApp
+// absorbs Stripe's processing + conversion fees on every top-up. Tracking
+// it here lets analytics surface "how much are we burning to acquire wallet
+// users" without joining against Stripe.
 export interface Topup {
   customerId: string;
   grossAmount: number;                        // what the customer paid Stripe (DOP)
-  stripeFee: number | null;                   // null in v1 (no balance.transaction webhook)
-  netAmount: number;                          // amount credited to balance (== gross in v1: TipApp absorbs Stripe fee)
+  stripeFee: number | null;                   // legacy: total fee field (kept for back-compat with v1 docs)
+  stripeProcessingFee?: number;               // DOP — Stripe's 2.9% + $0.30 slice (estimated by pricing engine)
+  stripeConversionFee?: number;               // DOP — Stripe's 1% FX slice (0 if charged in DOP)
+  tipappCost?: number;                        // DOP — total fees absorbed by TipApp on this top-up
+  exchangeRate?: number;                      // DOP per USD used at top-up time
+  netAmount: number;                          // amount credited to balance (== gross: TipApp absorbs Stripe fee)
   createdAt: admin.firestore.Timestamp;
   stripePaymentIntentId: string;
 }
