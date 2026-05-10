@@ -28,7 +28,8 @@ service cloud.firestore {
     match /tips/{tipId} {
       allow read: if request.auth != null && (
         request.auth.uid == resource.data.userId ||
-        request.auth.uid == resource.data.get('senderUid', '')
+        request.auth.uid == resource.data.get('senderUid', '') ||
+        request.auth.token.admin == true
       );
       allow create: if request.auth != null
         && request.resource.data.get('paidFromBalance', false) == false;
@@ -39,7 +40,10 @@ service cloud.firestore {
     // Users can read their own payouts
     // Only admin (you) can create payouts
     match /payouts/{payoutId} {
-      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow read: if request.auth != null && (
+        request.auth.uid == resource.data.userId ||
+        request.auth.token.admin == true
+      );
       allow write: if request.auth != null && request.auth.token.admin == true;
     }
 
