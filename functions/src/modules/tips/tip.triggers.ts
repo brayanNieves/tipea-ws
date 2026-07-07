@@ -134,11 +134,17 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
     const statsRef = db.doc(`user_daily_stats/${tip.userId}_${today}`);
     const batch = db.batch();
 
+    // Dev tips bypass real payment and need to land as `paid` so they show
+    // up in reports without manual SQL massaging. Real tips still settle as
+    // `pending` and only flip to `paid` after the payout cycle runs.
+    const isDevTip = tip.paymentMethod === "dev";
+    const resolvedStatus = isDevTip ? (tip.status ?? "paid") : "pending";
+
     const tipUpdate: Record<string, unknown> = {
       commissionPct,
       commissionAmt,
       netAmount,
-      status: "pending",
+      status: resolvedStatus,
       processedAt: admin.firestore.FieldValue.serverTimestamp(),
       suspicious: isSuspicious,
       suspicionReasons: isSuspicious ? suspicionReasons : [],

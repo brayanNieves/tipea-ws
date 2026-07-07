@@ -2,6 +2,11 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Rank of a QR funnel step, for forward-only progression checks.
+    function qrRank(s) {
+      return s == 'completed' ? 2 : (s == 'started' ? 1 : 0);
+    }
+
     // ── users ──────────────────────────────────────────────
     // Read: any authenticated user (including anonymous customers scanning a
     //   QR) — needed to display the staff's name/role/photo on the tip page.
@@ -13,7 +18,10 @@ service cloud.firestore {
     // Update: still self-only.
     match /users/{userId} {
       allow read: if request.auth != null;
-      allow update: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null && (
+        request.auth.uid == userId ||
+        request.auth.token.admin == true
+      );
       allow create: if request.auth != null;
       allow delete: if false;
     }
@@ -68,6 +76,35 @@ service cloud.firestore {
         request.auth.token.admin == true
       );
       allow write: if false;
+    }
+
+    // ── qr_scans ───────────────────────────────────────────
+    // QR funnel events, one mutable doc per visitor session (id = sessionId),
+    // written by the customer tip page under anonymous auth. Backoffice reads
+    // them for the /analytics/qr funnel. The create path is public, so it is
+    // constrained tightly and steps only move forward (scanned → started →
+    // completed). Consider enabling App Check to further blunt spam that could
+    // inflate a staff member's scan counts.
+    match /qr_scans/{sessionId} {
+      allow read: if request.auth != null && request.auth.token.admin == true;
+
+      // First write must be a fresh 'scanned' event for an existing staff member.
+      allow create: if request.auth != null
+        && request.resource.data.status == 'scanned'
+        && request.resource.data.userId is string
+        && exists(/databases/$(database)/documents/users/$(request.resource.data.userId))
+        && request.resource.data.get('tipId', null) == null
+        && request.resource.data.get('amount', null) == null
+        && request.resource.data.get('completedAt', null) == null;
+
+      // Progression only: never downgrade a step, and identity fields are frozen.
+      allow update: if request.auth != null
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.scannedAt == resource.data.scannedAt
+        && request.resource.data.status in ['scanned', 'started', 'completed']
+        && qrRank(request.resource.data.status) >= qrRank(resource.data.status);
+
+      allow delete: if false;
     }
 
     // ── plans ──────────────────────────────────────────────
