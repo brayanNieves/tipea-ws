@@ -1,19 +1,19 @@
 // ─────────────────────────────────────────────────────────────
-// Pricing engine — funciones puras
+// Pricing engine — pure functions
 //
-// MODELO DE NEGOCIO: el fee se le cobra AL CLIENTE, encima de la propina.
-// El staff SIEMPRE recibe el 100% de la propina — no se le descuenta
-// comisión, ni Stripe, ni margen. `staffNet === tipAmount`, siempre.
+// BUSINESS MODEL: the fee is charged to the CUSTOMER, on top of the tip.
+// Staff ALWAYS receive 100% of the tip — no commission, no Stripe cut, no
+// margin buffer is ever deducted. `staffNet === tipAmount`, always.
 //
-//   visibleAmount (lo que paga el cliente) = tipAmount + customerFee
+//   visibleAmount (what the customer pays) = tipAmount + customerFee
 //   staffNet                               = tipAmount
 //   profitability                          = customerFee
 //
-// El costo de procesamiento se sigue calculando SOLO como dato informativo
-// del ledger (para reconciliar contra Stripe); no reduce el pago al staff.
+// Processing cost is still computed, but ONLY as ledger information (to
+// reconcile against Stripe); it never reduces the staff payout.
 //
-// Sin efectos secundarios ni I/O — el tipo de cambio se inyecta para que
-// este módulo quede puro y testeable.
+// No side effects, no I/O — the FX rate is injected so this module stays
+// pure and unit-testable.
 // ─────────────────────────────────────────────────────────────
 
 import type {
@@ -22,34 +22,33 @@ import type {
   PricingPaymentMethod,
 } from "./pricing.types";
 
-// Pricing estándar de tarjeta internacional de Stripe.
+// Stripe's standard international card pricing.
 export const STRIPE_PCT_USD = 0.029;
 export const STRIPE_FIXED_USD = 0.30;
 export const STRIPE_CONVERSION_PCT = 0.01;
 
-// Comisión al staff. 0 — el fee lo paga el cliente, no el staff.
-// No subir de 0 sin cambiar el modelo de negocio completo.
+// Staff commission. 0 — the fee is paid by the customer, not the staff.
+// Do not raise this above 0 without changing the whole business model.
 export const PLATFORM_FEE_PCT = 0;
 
-// Usado solo cuando el servicio de FX no logra producir una tasa fresca.
+// Used only when the FX service can't produce a fresh rate.
 export const DEFAULT_DOP_PER_USD = 59.25;
 
-/** Redondea a 2 decimales (centavos DOP). Evita drift de float. */
+/** Round to 2 decimals (DOP cents). Avoids float drift. */
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
 /**
- * Calcula el desglose de una propina.
+ * Compute the breakdown for a tip.
  *
- * @param tipAmountDop    la propina — lo que recibe el staff (DOP). 100%.
- * @param fxRate          DOP por USD (de exchange-rate.service)
+ * @param tipAmountDop    the tip — what staff receive (DOP). 100% of it.
+ * @param fxRate          DOP per USD (from exchange-rate.service)
  * @param paymentMethod   'card' | 'apple_pay' | 'google_pay' | 'wallet' | 'dev'
- * @param chargedCurrency moneda del PaymentIntent en Stripe. Las propinas
- *                        desde wallet fuerzan 'dop' porque no hay llamada a
- *                        Stripe al momento de la propina.
- * @param customerFeeDop  fee cobrado al cliente encima de la propina (DOP).
- *                        Se calcula con `calculateCustomerFee` desde
+ * @param chargedCurrency Stripe currency the PaymentIntent is in. Wallet tips
+ *                        force 'dop' since no Stripe call happens at tip time.
+ * @param customerFeeDop  fee charged to the customer on top of the tip (DOP).
+ *                        Computed with `calculateCustomerFee` from
  *                        /config/customerFee.
  */
 export function computeBreakdown(
@@ -60,26 +59,26 @@ export function computeBreakdown(
   customerFeeDop: number = 0
 ): PricingBreakdown {
   if (!Number.isFinite(tipAmountDop) || tipAmountDop <= 0) {
-    throw new Error(`computeBreakdown: tipAmount inválido=${tipAmountDop}`);
+    throw new Error(`computeBreakdown: invalid tipAmount=${tipAmountDop}`);
   }
   if (!Number.isFinite(fxRate) || fxRate <= 0) {
-    throw new Error(`computeBreakdown: fxRate inválido=${fxRate}`);
+    throw new Error(`computeBreakdown: invalid fxRate=${fxRate}`);
   }
   if (!Number.isFinite(customerFeeDop) || customerFeeDop < 0) {
-    throw new Error(`computeBreakdown: customerFee inválido=${customerFeeDop}`);
+    throw new Error(`computeBreakdown: invalid customerFee=${customerFeeDop}`);
   }
 
   const walletUsed = paymentMethod === "wallet";
 
-  // Lo que se le cobra al cliente: propina + fee.
+  // What the customer is charged: tip + fee.
   const visibleAmount = round2(tipAmountDop + customerFeeDop);
 
   let stripeProcessingFee = 0;
   let stripeConversionFee = 0;
 
   if (!walletUsed) {
-    // Informativo: el costo de Stripe se calcula sobre el total cobrado,
-    // pero NO se le descuenta al staff — lo absorbe TipApp.
+    // Informational: Stripe's cost is computed on the total charged, but it
+    // is NOT deducted from the staff — TipApp absorbs it.
     const amountUsd = visibleAmount / fxRate;
     const processingUsd = amountUsd * STRIPE_PCT_USD + STRIPE_FIXED_USD;
     stripeProcessingFee = round2(processingUsd * fxRate);
@@ -92,7 +91,7 @@ export function computeBreakdown(
 
   const totalProcessingCost = round2(stripeProcessingFee + stripeConversionFee);
 
-  // El staff recibe el 100% de la propina. Sin excepciones.
+  // Staff receive 100% of the tip. No exceptions.
   const staffNet = round2(tipAmountDop);
 
   return {
@@ -101,12 +100,12 @@ export function computeBreakdown(
     visibleAmount,
     stripeProcessingFee,
     stripeConversionFee,
-    // Comisión al staff — siempre 0 en este modelo.
+    // Staff commission — always 0 under this model.
     platformFee: 0,
     marginSafety: 0,
     staffNet,
     totalProcessingCost,
-    // El ingreso de TipApp en esta transacción es el fee cobrado al cliente.
+    // TipApp's revenue on this transaction is the fee the customer paid.
     profitability: round2(customerFeeDop),
     exchangeRate: fxRate,
     currency: walletUsed ? "dop" : chargedCurrency,

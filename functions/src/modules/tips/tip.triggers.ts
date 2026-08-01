@@ -13,24 +13,24 @@ import type {
 } from "../../types";
 
 /**
- * Resuelve el pago al staff + el fee al cliente + el ledger de pricing.
+ * Resolve the staff payout + the customer fee + the pricing ledger.
  *
- * REGLA DEL MODELO: el staff recibe SIEMPRE el 100% de la propina.
- *   pago al staff  = tipAmount
- *   comisión       = 0
- *   ingreso TipApp = feeCharged (cobrado al cliente, registrado aparte)
+ * MODEL RULE: staff ALWAYS receive 100% of the tip.
+ *   staff payout   = tipAmount
+ *   commission     = 0
+ *   TipApp revenue = feeCharged (paid by the customer, tracked separately)
  *
- * Tres casos:
- *   1. El tip ya trae un bloque `pricing` (path de wallet, o path directo
- *      cuando el FE adjuntó la salida del engine desde createPaymentIntent)
- *      → se usa tal cual.
- *   2. No trae `pricing` → se calcula uno leyendo /config/customerFee y se
- *      escribe de vuelta para que /tips quede uniforme.
- *   3. El engine falla → fallback sin fee: el staff igual cobra el 100%.
+ * Three cases:
+ *   1. The tip already carries a `pricing` block (wallet path, or direct path
+ *      when the FE attached the engine output from createPaymentIntent) →
+ *      use it as-is.
+ *   2. No `pricing` → compute one by reading /config/customerFee and write it
+ *      back so /tips stays uniform.
+ *   3. The engine throws → fall back with no fee; staff still get 100%.
  */
 async function resolvePricing(tip: FirebaseFirestore.DocumentData) {
-  // La propina es lo que recibe el staff. `amount` se mantiene como campo
-  // canónico; `tipAmount` es el alias explícito que escribe el FE nuevo.
+  // The tip is what staff receive. `amount` stays the canonical field;
+  // `tipAmount` is the explicit alias written by the new FE.
   const tipAmount: number = tip.tipAmount ?? tip.amount;
 
   const existing = tip.pricing as TipPricingLedger | undefined;
@@ -38,7 +38,7 @@ async function resolvePricing(tip: FirebaseFirestore.DocumentData) {
     return {
       commissionPct: 0,
       commissionAmt: 0,
-      // Defensa: si un ledger viejo trae un staffNet recortado, gana la propina.
+      // Guard: if an old ledger carries a reduced staffNet, the tip wins.
       netAmount: tipAmount,
       feeCharged: existing.customerFee ?? tip.feeCharged ?? 0,
       customerPaid: existing.visibleAmount ?? tip.customerPaid ?? tipAmount,
@@ -47,7 +47,7 @@ async function resolvePricing(tip: FirebaseFirestore.DocumentData) {
     };
   }
 
-  // Sin ledger — derivar el método de pago desde los flags del tip.
+  // No ledger yet — derive the payment method from the tip flags.
   const paymentMethod: TipPricingPaymentMethod = tip.paidFromWallet
     ? "wallet"
     : tip.paymentMethod === "apple_pay" || tip.paymentMethod === "google_pay"
@@ -56,8 +56,8 @@ async function resolvePricing(tip: FirebaseFirestore.DocumentData) {
   const chargedCurrency = tip.paidFromWallet ? "dop" : "usd";
 
   try {
-    // Si el doc ya trae el fee cobrado, se respeta; si no, se recalcula
-    // desde la config vigente.
+    // Honour the fee already on the doc; otherwise recompute it from the
+    // current config.
     let feeCharged: number = tip.feeCharged;
     if (typeof feeCharged !== "number" || !Number.isFinite(feeCharged) || feeCharged < 0) {
       const cfg = await customerFeeRepo.read();
@@ -80,8 +80,8 @@ async function resolvePricing(tip: FirebaseFirestore.DocumentData) {
       computed: true,
     };
   } catch (err) {
-    // Último recurso: el tip igual se liquida y el staff igual cobra el 100%.
-    console.warn(`[onTipCreated] pricing engine falló; liquidando sin fee`, err);
+    // Last resort: the tip still settles and staff still get 100%.
+    console.warn(`[onTipCreated] pricing engine failed; settling with no fee`, err);
     return {
       commissionPct: 0,
       commissionAmt: 0,
@@ -133,8 +133,8 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
     const plan = planSnap.data();
     if (!plan) throw new Error(`Plan not found: ${user.planId}`);
 
-    // ── 4. Resolver el pago al staff y el fee al cliente ─────
-    // El staff recibe el 100%: commissionAmt siempre 0, netAmount = propina.
+    // ── 4. Resolve the staff payout and the customer fee ─────
+    // Staff get 100%: commissionAmt always 0, netAmount = the tip.
     const {
       commissionPct,
       commissionAmt,
@@ -165,10 +165,10 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
     const resolvedStatus = isDevTip ? (tip.status ?? "paid") : "pending";
 
     const tipUpdate: Record<string, unknown> = {
-      commissionPct, // 0 — al staff no se le descuenta nada
+      commissionPct, // 0 — nothing is deducted from staff
       commissionAmt, // 0
-      netAmount, // === tipAmount, el 100% de la propina
-      // Desglose del fee al cliente (ingreso de TipApp).
+      netAmount, // === tipAmount, 100% of the tip
+      // Customer fee breakdown (TipApp revenue).
       tipAmount,
       feeCharged,
       customerPaid,
@@ -192,9 +192,9 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
       sourceType: "tip",
       grossAmount: tipAmount,
       commissionPct, // 0
-      commissionAmt, // 0 — al staff no se le descuenta nada
-      netAmount, // el staff recibe el 100%
-      // El ingreso real de TipApp es el fee que pagó el cliente.
+      commissionAmt, // 0 — nothing is deducted from staff
+      netAmount, // staff receive 100%
+      // TipApp's actual revenue is the fee the customer paid.
       feeCharged,
       customerPaid,
       status: "pending",
@@ -242,8 +242,8 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
     await Promise.all([
       db.runTransaction(async (tx) => {
         const summarySnap = await tx.get(summaryRef);
-        // `totalCommissions` sigue siendo el KPI de ingreso del admin, pero
-        // ahora se alimenta del fee al cliente (antes era la comisión al staff).
+        // `totalCommissions` is still the admin's revenue KPI, but it is now
+        // fed by the customer fee (it used to be the staff commission).
         if (!summarySnap.exists) {
           tx.set(summaryRef, {
             date: today,
@@ -271,8 +271,8 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
 
       db.runTransaction(async (tx) => {
         const statsSnap = await tx.get(statsRef);
-        // `commissionAmt` queda en 0 (al staff no se le descuenta nada);
-        // `feeCollected` acumula lo que pagó el cliente por este usuario.
+        // `commissionAmt` stays 0 (nothing deducted from staff);
+        // `feeCollected` accumulates what customers paid for this user.
         if (!statsSnap.exists) {
           tx.set(statsRef, {
             userId: tip.userId,

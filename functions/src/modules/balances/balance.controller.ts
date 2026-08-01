@@ -225,8 +225,8 @@ export const tipFromBalance = onCall(async (request) => {
     throw new HttpsError("not-found", `Empleado ${staffId} no encontrado.`);
   }
 
-  // El fee se le cobra al CLIENTE: se debita propina + fee del balance, y el
-  // staff recibe la propina completa.
+  // The fee is charged to the CUSTOMER: tip + fee are debited from the
+  // balance and staff receive the full tip.
   const feeConfig = await customerFeeRepo.read();
   const fee = calculateCustomerFee(amount, feeConfig.percentageFee, feeConfig.fixedFee);
 
@@ -237,7 +237,7 @@ export const tipFromBalance = onCall(async (request) => {
       tipWriter: (tx, tipRef) => {
         tx.set(tipRef, {
           userId: staffId,
-          // `amount` = la propina: lo que recibe el staff, el 100%.
+          // `amount` = the tip: what staff receive, 100% of it.
           amount,
           tipAmount: amount,
           feeCharged: fee.totalFee,

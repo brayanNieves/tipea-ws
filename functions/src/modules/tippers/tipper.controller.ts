@@ -330,13 +330,13 @@ export const tipFromWallet = onCall(async (request) => {
     throw new HttpsError("not-found", `Staff ${staffId} not found.`);
   }
 
-  // El fee se le cobra al CLIENTE: se debita propina + fee del wallet, y el
-  // staff recibe la propina completa. Se recalcula acá en el servidor.
+  // The fee is charged to the CUSTOMER: tip + fee are debited from the
+  // wallet and staff receive the full tip. Recomputed here, server-side.
   const feeConfig = await customerFeeRepo.read();
   const fee = calculateCustomerFee(amount, feeConfig.percentageFee, feeConfig.fixedFee);
 
-  // Breakdown del wallet (sin fees de Stripe en esta fila; el top-up ya los
-  // absorbió). staffNet sale igual a la propina completa.
+  // Wallet breakdown (no Stripe fees on this row; the top-up already
+  // absorbed them). staffNet comes out equal to the full tip.
   const walletPricing = await pricingService.breakdownFor(
     amount,
     "wallet",
@@ -347,7 +347,7 @@ export const tipFromWallet = onCall(async (request) => {
   try {
     const result = await tipperRepo.debitAndCreateTip({
       uid: canonUid,
-      // Se debita propina + fee; el staff igual recibe la propina completa.
+      // Debit tip + fee; staff still receive the full tip.
       amount: fee.customerPays,
       tipWriter: (tx, tipRef) => {
         tx.set(tipRef, {
@@ -356,7 +356,7 @@ export const tipFromWallet = onCall(async (request) => {
           // bumps the per-device count for *this* device's onboarding metric.
           // The wallet itself debits canonUid.
           senderUid: request.auth?.uid ?? null,
-          // `amount` = la propina (lo que recibe el staff, 100%).
+          // `amount` = the tip (what staff receive, 100% of it).
           amount,
           tipAmount: amount,
           feeCharged: fee.totalFee,

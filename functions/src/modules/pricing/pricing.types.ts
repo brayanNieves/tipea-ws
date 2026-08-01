@@ -21,27 +21,27 @@ export type PricingPaymentMethod =
 export type PricingCurrency = "dop" | "usd";
 
 export interface PricingBreakdown {
-  /** La propina — lo que recibe el staff. DOP. Siempre el 100%. */
+  /** The tip — what staff receive. DOP. Always 100% of it. */
   tipAmount: number;
-  /** Fee cobrado al CLIENTE encima de la propina, DOP. Ingreso de TipApp. */
+  /** Fee charged to the CUSTOMER on top of the tip, DOP. TipApp's revenue. */
   customerFee: number;
   /** What the customer pays / sees: tipAmount + customerFee. DOP. */
   visibleAmount: number;
   /** Stripe's 2.9% + $0.30 processing slice, in DOP. 0 for wallet tips.
-   *  Informativo — TipApp lo absorbe, no se le descuenta al staff. */
+   *  Informational — TipApp absorbs it; never deducted from staff. */
   stripeProcessingFee: number;
   /** Stripe's 1% currency conversion slice, in DOP. 0 if charged in DOP.
-   *  Informativo — TipApp lo absorbe, no se le descuenta al staff. */
+   *  Informational — TipApp absorbs it; never deducted from staff. */
   stripeConversionFee: number;
-  /** Comisión al staff. Siempre 0 — el fee lo paga el cliente. */
+  /** Staff commission. Always 0 — the customer pays the fee. */
   platformFee: number;
-  /** @deprecated Siempre 0. El buffer ya no se le descuenta al staff. */
+  /** @deprecated Always 0. The buffer is no longer deducted from staff. */
   marginSafety: number;
-  /** Lo que recibe el staff: SIEMPRE === tipAmount (100%). */
+  /** What staff receive: ALWAYS === tipAmount (100%). */
   staffNet: number;
-  /** stripeProcessingFee + stripeConversionFee. Informativo. */
+  /** stripeProcessingFee + stripeConversionFee. Informational. */
   totalProcessingCost: number;
-  /** Ingreso de TipApp en esta transacción: customerFee. */
+  /** TipApp's revenue on this transaction: customerFee. */
   profitability: number;
   /** DOP per USD used in the computation. */
   exchangeRate: number;

@@ -5,11 +5,11 @@ const CUSTOMER_FEE_DOC = "config/customerFee";
 
 export const customerFeeRepo = {
   /**
-   * Lee el fee al cliente desde Firestore. Lo edita el admin en
-   * /admin/fee-config (backoffice).
+   * Reads the customer fee from Firestore. The admin edits it at
+   * /admin/fee-config in the backoffice.
    *
-   * Nunca lanza: si el doc no existe, un campo falta o es inválido, cae a
-   * DEFAULT_CUSTOMER_FEE para que los pagos sigan funcionando.
+   * Never throws: if the doc doesn't exist, or a field is missing or invalid,
+   * it falls back to DEFAULT_CUSTOMER_FEE so payments keep working.
    */
   async read(): Promise<CustomerFeeConfig> {
     try {
@@ -32,18 +32,18 @@ export const customerFeeRepo = {
 
       if (rawPct !== undefined && rawPct !== percentageFee) {
         console.warn(
-          `[customerFeeRepo.read] percentageFee inválido=${rawPct}; usando ${percentageFee}`
+          `[customerFeeRepo.read] invalid percentageFee=${rawPct}; using ${percentageFee}`
         );
       }
       if (rawFixed !== undefined && rawFixed !== fixedFee) {
         console.warn(
-          `[customerFeeRepo.read] fixedFee inválido=${rawFixed}; usando ${fixedFee}`
+          `[customerFeeRepo.read] invalid fixedFee=${rawFixed}; using ${fixedFee}`
         );
       }
 
       return { percentageFee, fixedFee };
     } catch (e) {
-      console.warn("[customerFeeRepo.read] falló la lectura, usando defaults", e);
+      console.warn("[customerFeeRepo.read] read failed, using defaults", e);
       return DEFAULT_CUSTOMER_FEE;
     }
   },

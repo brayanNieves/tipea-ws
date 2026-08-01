@@ -1,12 +1,12 @@
 import type { TipCommissionResult } from "./tip.types";
 
 /**
- * El staff SIEMPRE recibe el 100% de la propina. El fee se le cobra al
- * cliente encima del monto (ver `payments/service-fee.ts` y
- * /config/customerFee), así que nunca hay deducción sobre el pago al staff.
+ * Staff ALWAYS receive 100% of the tip. The fee is charged to the customer
+ * on top of it (see `payments/service-fee.ts` and /config/customerFee), so
+ * there is never a deduction on the staff payout.
  *
- * Se conserva la firma para no romper llamadores existentes; el parámetro
- * `commissionPct` se ignora deliberadamente.
+ * The signature is kept so existing callers don't break; the `commissionPct`
+ * parameter is deliberately ignored.
  */
 export function calculateCommission(
   amount: number,
