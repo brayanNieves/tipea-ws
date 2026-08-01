@@ -3,6 +3,8 @@ import { admin, db } from "../../config/firebase";
 import { buildStripeClient, stripeSecretKey } from "../../config/stripe";
 import { customerIdFromPhone, isValidDoPhone, normalizePhone } from "../../shared/utils/customer-id";
 import { balanceRepo } from "./balance.repository";
+import { customerFeeRepo } from "../payments/customer-fee.repository";
+import { calculateCustomerFee } from "../payments/service-fee";
 
 const MIN_TOPUP_DOP = 200;
 
@@ -223,14 +225,23 @@ export const tipFromBalance = onCall(async (request) => {
     throw new HttpsError("not-found", `Empleado ${staffId} no encontrado.`);
   }
 
+  // El fee se le cobra al CLIENTE: se debita propina + fee del balance, y el
+  // staff recibe la propina completa.
+  const feeConfig = await customerFeeRepo.read();
+  const fee = calculateCustomerFee(amount, feeConfig.percentageFee, feeConfig.fixedFee);
+
   try {
     const result = await balanceRepo.debitAndCreateTip({
       customerId,
-      amount,
+      amount: fee.customerPays,
       tipWriter: (tx, tipRef) => {
         tx.set(tipRef, {
           userId: staffId,
+          // `amount` = la propina: lo que recibe el staff, el 100%.
           amount,
+          tipAmount: amount,
+          feeCharged: fee.totalFee,
+          customerPaid: fee.customerPays,
           customerId,
           paidFromBalance: true,
           source: "qr",

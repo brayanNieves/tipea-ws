@@ -1,17 +1,17 @@
 // ─────────────────────────────────────────────────────────────
 // Pricing service
 //
-// Thin wrapper around the pure engine that resolves the live FX rate from
-// `exchange-rate.service.ts`. Controllers should depend on this service
-// (not the engine directly) so callers don't have to thread the rate.
+// Wrapper delgado sobre el engine puro que resuelve el tipo de cambio vivo
+// desde `exchange-rate.service.ts`. Los controllers deben depender de este
+// servicio (no del engine directo) para no tener que pasar la tasa.
 //
-// `platformFeePct` is the staff's per-tip commission rate (Starter 7%,
-// Pro 4%, Business 2%). Pass it whenever the caller can resolve the
-// staff's plan; the engine falls back to the global default otherwise.
+// `customerFeeDop` es el fee que se le cobra AL CLIENTE encima de la propina.
+// Sale de /config/customerFee vía `customerFeeRepo` + `calculateCustomerFee`.
+// El staff siempre recibe el 100% de la propina.
 // ─────────────────────────────────────────────────────────────
 
 import { getUsdToDopRate } from "../payments/exchange-rate.service";
-import { computeBreakdown, DEFAULT_DOP_PER_USD, PLATFORM_FEE_PCT } from "./pricing.engine";
+import { computeBreakdown, DEFAULT_DOP_PER_USD } from "./pricing.engine";
 import type {
   PricingBreakdown,
   PricingCurrency,
@@ -20,48 +20,33 @@ import type {
 
 export const pricingService = {
   /**
-   * Resolve the FX rate (cache → API → fallback) and compute the breakdown.
-   * Use this from any callable that needs the per-transaction ledger.
+   * Resuelve el tipo de cambio (cache → API → fallback) y calcula el desglose.
    */
   async breakdownFor(
-    visibleAmountDop: number,
+    tipAmountDop: number,
     paymentMethod: PricingPaymentMethod,
     chargedCurrency: PricingCurrency = "usd",
-    platformFeePct: number = PLATFORM_FEE_PCT
+    customerFeeDop: number = 0
   ): Promise<PricingBreakdown> {
     let fxRate = DEFAULT_DOP_PER_USD;
     try {
       const { rate } = await getUsdToDopRate();
       if (Number.isFinite(rate) && rate > 0) fxRate = rate;
     } catch {
-      // exchange-rate.service already has its own fallbacks; if even those
-      // throw, fall back to the engine default to avoid breaking the tip flow.
+      // exchange-rate.service ya tiene sus propios fallbacks; si hasta esos
+      // fallan, usamos el default del engine para no romper el flujo de propina.
     }
-    return computeBreakdown(visibleAmountDop, fxRate, paymentMethod, chargedCurrency, platformFeePct);
+    return computeBreakdown(tipAmountDop, fxRate, paymentMethod, chargedCurrency, customerFeeDop);
   },
 
-  /** Sync variant — when the caller already has the FX rate in hand. */
+  /** Variante sync — cuando el caller ya tiene el tipo de cambio en mano. */
   computeWithRate(
-    visibleAmountDop: number,
+    tipAmountDop: number,
     fxRate: number,
     paymentMethod: PricingPaymentMethod,
     chargedCurrency: PricingCurrency = "usd",
-    platformFeePct: number = PLATFORM_FEE_PCT
+    customerFeeDop: number = 0
   ): PricingBreakdown {
-    return computeBreakdown(visibleAmountDop, fxRate, paymentMethod, chargedCurrency, platformFeePct);
+    return computeBreakdown(tipAmountDop, fxRate, paymentMethod, chargedCurrency, customerFeeDop);
   },
 };
-
-/**
- * Convert a plan's commissionPct (0–100, e.g. `7` for Starter) to the
- * 0–1 fraction the engine expects. Tolerates missing/invalid values by
- * falling back to the default.
- */
-export function planCommissionFraction(commissionPct: number | null | undefined): number {
-  if (!Number.isFinite(commissionPct) || commissionPct === null || commissionPct === undefined) {
-    return PLATFORM_FEE_PCT;
-  }
-  const pct = commissionPct as number;
-  if (pct < 0 || pct > 100) return PLATFORM_FEE_PCT;
-  return pct / 100;
-}

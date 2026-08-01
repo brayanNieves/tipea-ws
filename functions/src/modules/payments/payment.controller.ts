@@ -4,7 +4,9 @@ import { buildStripeClient, stripeSecretKey } from "../../config/stripe";
 import { mailer } from "../../mailer_service";
 import { getUsdToDopRate } from "./exchange-rate.service";
 import { paymentConfigRepo } from "./payment-config.repository";
-import { planCommissionFraction, pricingService } from "../pricing/pricing.service";
+import { customerFeeRepo } from "./customer-fee.repository";
+import { calculateCustomerFee } from "./service-fee";
+import { pricingService } from "../pricing/pricing.service";
 import type { PricingPaymentMethod } from "../pricing/pricing.types";
 
 // ─────────────────────────────────────────────────────────────
@@ -12,10 +14,14 @@ import type { PricingPaymentMethod } from "../pricing/pricing.types";
 // Crea un Stripe PaymentIntent para procesar el pago de un tip directo.
 //
 // Request:  { amount: number, targetUserId: string, paymentMethod?: 'card' | 'apple_pay' | 'google_pay' }
-//           amount = monto VISIBLE en DOP (lo que el cliente selecciona).
-//           El cliente paga exactamente ese monto — el pricing engine deja
-//           el desglose interno (Stripe + plataforma + margen) registrado
-//           en /tips.pricing y en metadata del PaymentIntent.
+//           amount = la PROPINA en DOP (lo que el cliente selecciona y lo que
+//           el staff recibe COMPLETO — el 100%).
+//
+//           El cliente paga la propina + un fee de servicio configurado en
+//           /config/customerFee (editable en el backoffice: /admin/fee-config).
+//           El total cobrado a Stripe es `customerPays = amount + feeCharged`.
+//           El fee se recalcula SIEMPRE en el servidor; nunca se confía en un
+//           total enviado por el cliente.
 //
 // Config (`appConfig/payment`):
 //   - chargeInUsd (bool, default true)
@@ -25,7 +31,10 @@ import type { PricingPaymentMethod } from "../pricing/pricing.types";
 // Response shape:
 //   {
 //     clientSecret, paymentIntentId,
-//     amountPesos,        // visibleAmount (DOP) — lo que el cliente paga
+//     tipAmount,          // la propina (DOP) — lo que recibe el staff, 100%
+//     feeCharged,         // fee cobrado al cliente (DOP)
+//     customerPays,       // tipAmount + feeCharged — lo que se cobra a Stripe
+//     amountPesos,        // === customerPays (back-compat)
 //     displayAmount,      // monto a mostrar en Apple Pay / UI (en displayCurrency)
 //     displayCurrency,    // "USD" | "DOP"
 //     chargedCurrency,    // "usd" | "dop" — lo que Stripe cobra
@@ -61,21 +70,6 @@ export const createPaymentIntent = onCall(
       throw new HttpsError("not-found", `Usuario ${targetUserId} no encontrado.`);
     }
 
-    // Resolve the staff's plan commission rate now so the pricing engine
-    // can use it instead of the global default. Plans remain the source of
-    // truth for per-staff commission tiers (Starter 7% / Pro 4% / Business 2%).
-    const targetUserData = targetUserSnap.data() ?? {};
-    const planId = (targetUserData as { planId?: string }).planId;
-    let planCommissionPct: number | null = null;
-    if (planId) {
-      const planSnap = await db.doc(`plans/${planId}`).get();
-      const planData = planSnap.data() as { commissionPct?: number } | undefined;
-      if (typeof planData?.commissionPct === "number") {
-        planCommissionPct = planData.commissionPct;
-      }
-    }
-    const platformFeeFraction = planCommissionFraction(planCommissionPct);
-
     let stripe;
     try {
       stripe = buildStripeClient();
@@ -83,8 +77,18 @@ export const createPaymentIntent = onCall(
       throw new HttpsError("failed-precondition", "Configuración de pagos no disponible.");
     }
 
-    // Customer pays exactly the visible amount — no uplift.
-    const visibleAmountDop = amount;
+    // `amount` es la PROPINA (lo que recibe el staff, 100%). El cliente paga
+    // la propina + el fee configurado en /config/customerFee. El servidor es
+    // la autoridad: recalcula el fee acá, nunca confía en un total del cliente.
+    const tipAmountDop = amount;
+    const feeConfig = await customerFeeRepo.read();
+    const fee = calculateCustomerFee(
+      tipAmountDop,
+      feeConfig.percentageFee,
+      feeConfig.fixedFee
+    );
+    const visibleAmountDop = fee.customerPays;
+
     const { chargeInUsd } = await paymentConfigRepo.read();
 
     // Defaults to 'card'; FE can pass 'apple_pay' / 'google_pay' so analytics
@@ -141,21 +145,22 @@ export const createPaymentIntent = onCall(
       };
     }
 
-    // Compute the centralized breakdown. Uses the same FX rate the engine
-    // resolves internally (cache → API → fallback) and the staff's plan
-    // commission tier as the platform fee.
+    // Desglose centralizado. El engine recibe la PROPINA + el fee al cliente;
+    // `staffNet` sale siempre igual a la propina (100%).
     const pricing = pricingService.computeWithRate(
-      visibleAmountDop,
+      tipAmountDop,
       dopRate ?? (await getUsdToDopRate()).rate,
       channel,
       chargedCurrency,
-      platformFeeFraction
+      fee.totalFee
     );
 
     // Build the PI payload now that we have the pricing block to embed.
     const baseMetadata: Record<string, string | number> = {
       senderUid: request.auth.uid,
       targetUserId,
+      tipAmount: pricing.tipAmount,
+      customerFee: pricing.customerFee,
       visibleAmount: pricing.visibleAmount,
       stripeProcessingFee: pricing.stripeProcessingFee,
       stripeConversionFee: pricing.stripeConversionFee,
@@ -195,13 +200,21 @@ export const createPaymentIntent = onCall(
       const paymentIntent = await stripe.paymentIntents.create(paymentIntentPayload);
 
       console.log(
-        `✅ [createPaymentIntent] id=${paymentIntent.id} | from=${request.auth.uid} | to=${targetUserId} | ${logSuffix} | platform=${pricing.platformFee} | staffNet=${pricing.staffNet}`
+        `✅ [createPaymentIntent] id=${paymentIntent.id} | from=${request.auth.uid} | to=${targetUserId} | ${logSuffix} | tip=${pricing.tipAmount} | fee=${pricing.customerFee} | staffNet=${pricing.staffNet}`
       );
 
       return {
         clientSecret: paymentIntent.client_secret,
         paymentIntentId: paymentIntent.id,
-        // Original tip amount (DOP) — kept for back-compat with FE callers.
+        // ── Desglose del fee al cliente ────────────────────────
+        // El staff recibe tipAmount completo; el cliente paga customerPays.
+        tipAmount: fee.tipAmount,
+        feeCharged: fee.totalFee,
+        feePercentageAmount: fee.percentageAmount,
+        feeFixed: fee.fixedFee,
+        customerPays: fee.customerPays,
+        // Total cobrado al cliente (DOP) — se mantiene el nombre por
+        // back-compat con callers del FE que ya lo leían.
         amountPesos: visibleAmountDop,
         // Lo que el frontend DEBE pasar a Apple Pay / Stripe Elements.
         displayAmount,

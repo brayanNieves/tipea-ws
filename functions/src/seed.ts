@@ -22,7 +22,7 @@ async function seed() {
     {
       id: "plan_starter",
       name: "Starter",
-      commissionPct: 7,
+      commissionPct: 0,
       monthlyFee: 0,
       maxTipsPerMonth: 100,
       features: ["qr_basic", "dashboard_basic"],
@@ -30,7 +30,7 @@ async function seed() {
     {
       id: "plan_pro",
       name: "Pro",
-      commissionPct: 4,
+      commissionPct: 0,
       monthlyFee: 1500,
       maxTipsPerMonth: -1,
       features: ["qr_custom", "dashboard_full", "analytics", "bulk_payout"],
@@ -38,7 +38,7 @@ async function seed() {
     {
       id: "plan_business",
       name: "Business",
-      commissionPct: 2,
+      commissionPct: 0,
       monthlyFee: 3500,
       maxTipsPerMonth: -1,
       features: ["qr_custom", "dashboard_full", "analytics", "bulk_payout", "priority_support"],

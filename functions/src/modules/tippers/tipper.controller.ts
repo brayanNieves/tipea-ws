@@ -4,7 +4,9 @@ import { buildStripeClient, stripeSecretKey } from "../../config/stripe";
 import { tipperRepo } from "./tipper.repository";
 import { recordEmailVerification, resolveCanonUid } from "./email-link";
 import { checkOtp, isValidEmail, normalizeEmail, requestOtp } from "../auth/otp.service";
-import { planCommissionFraction, pricingService } from "../pricing/pricing.service";
+import { pricingService } from "../pricing/pricing.service";
+import { customerFeeRepo } from "../payments/customer-fee.repository";
+import { calculateCustomerFee } from "../payments/service-fee";
 
 const MIN_WALLET_TOPUP_DOP = 200;
 
@@ -322,37 +324,31 @@ export const tipFromWallet = onCall(async (request) => {
 
   const canonUid = await requireVerifiedEmail(request.auth.uid, email);
 
-  // Verify staff exists before debiting to avoid wasted writes. Resolve
-  // their plan rate so the pricing engine applies the same commission
-  // tier (Starter 7% / Pro 4% / Business 2%) the trigger would have.
+  // Verify staff exists before debiting to avoid wasted writes.
   const staffSnap = await db.doc(`users/${staffId}`).get();
   if (!staffSnap.exists) {
     throw new HttpsError("not-found", `Staff ${staffId} not found.`);
   }
-  const staffData = staffSnap.data() ?? {};
-  const staffPlanId = (staffData as { planId?: string }).planId;
-  let staffPlanCommissionPct: number | null = null;
-  if (staffPlanId) {
-    const planSnap = await db.doc(`plans/${staffPlanId}`).get();
-    const planData = planSnap.data() as { commissionPct?: number } | undefined;
-    if (typeof planData?.commissionPct === "number") {
-      staffPlanCommissionPct = planData.commissionPct;
-    }
-  }
 
-  // Compute the wallet pricing breakdown (no Stripe fees on this row;
-  // the top-up already absorbed them).
+  // El fee se le cobra al CLIENTE: se debita propina + fee del wallet, y el
+  // staff recibe la propina completa. Se recalcula acá en el servidor.
+  const feeConfig = await customerFeeRepo.read();
+  const fee = calculateCustomerFee(amount, feeConfig.percentageFee, feeConfig.fixedFee);
+
+  // Breakdown del wallet (sin fees de Stripe en esta fila; el top-up ya los
+  // absorbió). staffNet sale igual a la propina completa.
   const walletPricing = await pricingService.breakdownFor(
     amount,
     "wallet",
     "dop",
-    planCommissionFraction(staffPlanCommissionPct)
+    fee.totalFee
   );
 
   try {
     const result = await tipperRepo.debitAndCreateTip({
       uid: canonUid,
-      amount,
+      // Se debita propina + fee; el staff igual recibe la propina completa.
+      amount: fee.customerPays,
       tipWriter: (tx, tipRef) => {
         tx.set(tipRef, {
           userId: staffId,
@@ -360,7 +356,11 @@ export const tipFromWallet = onCall(async (request) => {
           // bumps the per-device count for *this* device's onboarding metric.
           // The wallet itself debits canonUid.
           senderUid: request.auth?.uid ?? null,
+          // `amount` = la propina (lo que recibe el staff, 100%).
           amount,
+          tipAmount: amount,
+          feeCharged: fee.totalFee,
+          customerPaid: fee.customerPays,
           paidFromWallet: true,
           source: "qr",
           status: "paid",

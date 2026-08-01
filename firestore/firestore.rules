@@ -115,6 +115,17 @@ service cloud.firestore {
       allow write: if request.auth != null && request.auth.token.admin == true;
     }
 
+    // ── config ─────────────────────────────────────────────
+    // /config/customerFee — el fee que se le cobra al CLIENTE encima de la
+    // propina. La página pública de propina lo lee para mostrar el desglose,
+    // así que la lectura es abierta (igual que /plans). Solo admin escribe.
+    // El servidor recalcula el fee en createPaymentIntent de todos modos,
+    // así que este doc no es una superficie de confianza para el cobro.
+    match /config/{docId} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.token.admin == true;
+    }
+
     // ── subscriptions ──────────────────────────────────────
     match /subscriptions/{userId} {
       allow read: if request.auth != null && request.auth.uid == userId;

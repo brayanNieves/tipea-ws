@@ -61,14 +61,16 @@ export type TipPricingPaymentMethod =
 export type TipPricingCurrency = "dop" | "usd";
 
 export interface TipPricingLedger {
-  visibleAmount: number;           // DOP — what the customer pays / sees
-  stripeProcessingFee: number;     // DOP — Stripe's 2.9% + $0.30 slice
+  tipAmount?: number;              // DOP — la propina; lo que recibe el staff (100%)
+  customerFee?: number;            // DOP — fee cobrado al cliente; ingreso de TipApp
+  visibleAmount: number;           // DOP — what the customer pays: tipAmount + customerFee
+  stripeProcessingFee: number;     // DOP — Stripe's 2.9% + $0.30 slice (informativo)
   stripeConversionFee: number;     // DOP — Stripe's 1% FX slice (0 if charged in DOP)
-  platformFee: number;             // DOP — TipApp's commission (PLATFORM_FEE_PCT × visible)
-  marginSafety: number;            // DOP — FX volatility buffer
-  staffNet: number;                // DOP — visible − stripe − platformFee − margin
+  platformFee: number;             // DOP — comisión al staff. Siempre 0.
+  marginSafety: number;            // DOP — @deprecated, siempre 0
+  staffNet: number;                // DOP — === tipAmount. El staff recibe el 100%.
   totalProcessingCost: number;     // DOP — stripeProcessingFee + stripeConversionFee
-  profitability: number;           // DOP — platformFee + marginSafety
+  profitability: number;           // DOP — customerFee
   exchangeRate: number;            // DOP per USD used in the calc
   currency: TipPricingCurrency;
   paymentMethod: TipPricingPaymentMethod;
@@ -78,15 +80,18 @@ export interface TipPricingLedger {
 export interface Tip {
   userId: string;                  // staff (recipient) UID
   senderUid?: string;              // anonymous customer Firebase UID — drives /tippers counters
-  amount: number;                  // original tip — commission base, excludes service fee
+  amount: number;                  // la propina — lo que recibe el staff (100%). === tipAmount
+  tipAmount?: number;              // alias explícito de `amount`; lo escribe el FE nuevo
+  feeCharged?: number;             // DOP — fee cobrado al CLIENTE. Ingreso de TipApp.
+  customerPaid?: number;           // DOP — amount + feeCharged. Lo que pagó el cliente.
   serviceFeeAmount?: number;       // legacy: fee paid by customer on top of tip (DOP) — direct-pay path
   totalChargedAmount?: number;     // legacy: tip + fee — what Stripe charged customer (DOP) — direct-pay path
   customerId?: string;             // legacy: hashed phone — present when paid from /balances (deprecated path)
   paidFromBalance?: boolean;       // legacy /balances path — kept for back-compat
   paidFromWallet?: boolean;        // true when debited from /tippers/{senderUid}.walletBalance
-  commissionPct: number;
-  commissionAmt: number;
-  netAmount: number;
+  commissionPct: number;           // siempre 0 — al staff no se le descuenta nada
+  commissionAmt: number;           // siempre 0
+  netAmount: number;               // === amount. El staff recibe el 100%.
   source: TipSource;
   status: TipStatus;
   payoutId: string | null;

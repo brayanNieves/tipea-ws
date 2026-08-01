@@ -1,18 +1,19 @@
 // ─────────────────────────────────────────────────────────────
-// Pricing engine — pure functions
+// Pricing engine — funciones puras
 //
-// All money math for tips/top-ups is centralized here so frontends can stay
-// dumb (they only render `visibleAmount`) and so we have a single place to
-// adjust fees without combing through controllers.
+// MODELO DE NEGOCIO: el fee se le cobra AL CLIENTE, encima de la propina.
+// El staff SIEMPRE recibe el 100% de la propina — no se le descuenta
+// comisión, ni Stripe, ni margen. `staffNet === tipAmount`, siempre.
 //
-// Constants are derived from a 5-screenshot Stripe sample:
-//   processing_fee_usd = amount_usd × 0.029 + 0.30
-//   conversion_fee_usd = amount_usd × 0.01
-// At ~59.25 DOP/USD this lands at `amount_dop × 0.039 + RD$ 18`, which
-// matches every observed transaction within rounding.
+//   visibleAmount (lo que paga el cliente) = tipAmount + customerFee
+//   staffNet                               = tipAmount
+//   profitability                          = customerFee
 //
-// No side effects, no I/O — the FX rate is injected so this module stays
-// pure and unit-testable.
+// El costo de procesamiento se sigue calculando SOLO como dato informativo
+// del ledger (para reconciliar contra Stripe); no reduce el pago al staff.
+//
+// Sin efectos secundarios ni I/O — el tipo de cambio se inyecta para que
+// este módulo quede puro y testeable.
 // ─────────────────────────────────────────────────────────────
 
 import type {
@@ -21,70 +22,65 @@ import type {
   PricingPaymentMethod,
 } from "./pricing.types";
 
-// Stripe's standard international card pricing.
+// Pricing estándar de tarjeta internacional de Stripe.
 export const STRIPE_PCT_USD = 0.029;
 export const STRIPE_FIXED_USD = 0.30;
 export const STRIPE_CONVERSION_PCT = 0.01;
 
-// Default platform commission, used only when the caller doesn't pass an
-// explicit rate. Per-staff rates still come from `plans/{planId}.commissionPct`
-// (Starter 7% / Pro 4% / Business 2%) so the plan tier remains the source
-// of truth for what the staff actually pays.
-export const PLATFORM_FEE_PCT = 0.06;
+// Comisión al staff. 0 — el fee lo paga el cliente, no el staff.
+// No subir de 0 sin cambiar el modelo de negocio completo.
+export const PLATFORM_FEE_PCT = 0;
 
-// Tiny buffer that absorbs DOP/USD intraday drift between the time we
-// quote a preset and the time Stripe actually settles the transaction.
-export const MARGIN_SAFETY_PCT = 0.01;
-
-// Used only when the FX service can't produce a fresh rate.
+// Usado solo cuando el servicio de FX no logra producir una tasa fresca.
 export const DEFAULT_DOP_PER_USD = 59.25;
 
-/** Round to 2 decimals (DOP cents). Avoids float drift. */
+/** Redondea a 2 decimales (centavos DOP). Evita drift de float. */
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
 /**
- * Compute the breakdown for a given visible DOP amount.
+ * Calcula el desglose de una propina.
  *
- * @param visibleAmountDop  what the customer pays / sees (DOP)
- * @param fxRate            DOP per USD (from exchange-rate.service)
- * @param paymentMethod     'card' | 'apple_pay' | 'google_pay' | 'wallet' | 'dev'
- * @param chargedCurrency   Stripe currency the PaymentIntent is in. Defaults
- *                          to 'usd' (chargeInUsd=true is the production mode).
- *                          Wallet tips override to 'dop' since no Stripe call
- *                          happens at tip time.
- * @param platformFeePct    Platform commission as a fraction (e.g. 0.07 for
- *                          Starter, 0.04 Pro, 0.02 Business). Defaults to
- *                          `PLATFORM_FEE_PCT` when the caller can't resolve
- *                          the staff's plan.
+ * @param tipAmountDop    la propina — lo que recibe el staff (DOP). 100%.
+ * @param fxRate          DOP por USD (de exchange-rate.service)
+ * @param paymentMethod   'card' | 'apple_pay' | 'google_pay' | 'wallet' | 'dev'
+ * @param chargedCurrency moneda del PaymentIntent en Stripe. Las propinas
+ *                        desde wallet fuerzan 'dop' porque no hay llamada a
+ *                        Stripe al momento de la propina.
+ * @param customerFeeDop  fee cobrado al cliente encima de la propina (DOP).
+ *                        Se calcula con `calculateCustomerFee` desde
+ *                        /config/customerFee.
  */
 export function computeBreakdown(
-  visibleAmountDop: number,
+  tipAmountDop: number,
   fxRate: number,
   paymentMethod: PricingPaymentMethod,
   chargedCurrency: PricingCurrency = "usd",
-  platformFeePct: number = PLATFORM_FEE_PCT
+  customerFeeDop: number = 0
 ): PricingBreakdown {
-  if (!Number.isFinite(visibleAmountDop) || visibleAmountDop <= 0) {
-    throw new Error(`computeBreakdown: invalid visibleAmount=${visibleAmountDop}`);
+  if (!Number.isFinite(tipAmountDop) || tipAmountDop <= 0) {
+    throw new Error(`computeBreakdown: tipAmount inválido=${tipAmountDop}`);
   }
   if (!Number.isFinite(fxRate) || fxRate <= 0) {
-    throw new Error(`computeBreakdown: invalid fxRate=${fxRate}`);
+    throw new Error(`computeBreakdown: fxRate inválido=${fxRate}`);
   }
-  if (!Number.isFinite(platformFeePct) || platformFeePct < 0 || platformFeePct > 1) {
-    throw new Error(`computeBreakdown: invalid platformFeePct=${platformFeePct}`);
+  if (!Number.isFinite(customerFeeDop) || customerFeeDop < 0) {
+    throw new Error(`computeBreakdown: customerFee inválido=${customerFeeDop}`);
   }
 
   const walletUsed = paymentMethod === "wallet";
+
+  // Lo que se le cobra al cliente: propina + fee.
+  const visibleAmount = round2(tipAmountDop + customerFeeDop);
 
   let stripeProcessingFee = 0;
   let stripeConversionFee = 0;
 
   if (!walletUsed) {
-    // Convert DOP → USD to compute Stripe's cut, then convert the cut back
-    // to DOP so every column in the ledger speaks the same currency.
-    const amountUsd = visibleAmountDop / fxRate;
+    // Informativo: el costo de Stripe se calcula sobre el total cobrado,
+    // pero NO se le descuenta al staff — lo absorbe TipApp.
+    const amountUsd = visibleAmount / fxRate;
     const processingUsd = amountUsd * STRIPE_PCT_USD + STRIPE_FIXED_USD;
     stripeProcessingFee = round2(processingUsd * fxRate);
 
@@ -94,34 +90,24 @@ export function computeBreakdown(
     }
   }
 
-  const platformFee = round2(visibleAmountDop * platformFeePct);
-  const marginSafety = round2(visibleAmountDop * MARGIN_SAFETY_PCT);
   const totalProcessingCost = round2(stripeProcessingFee + stripeConversionFee);
-  const staffNet = round2(
-    visibleAmountDop - totalProcessingCost - platformFee - marginSafety
-  );
 
-  // For card/Apple Pay/Google Pay: TipApp's revenue is platformFee + margin.
-  // Stripe is paid from the customer's gross before the staff sees it, so the
-  // platform doesn't "absorb" Stripe on the direct path — the staff does
-  // (their net is reduced by it).
-  //
-  // For wallet tips: there's no Stripe charge at tip time (it was paid at
-  // top-up time and absorbed there), so platform revenue is simply platformFee
-  // + margin and Stripe cost on this row is 0.
-  //
-  // Either way: profitability of THIS transaction = platformFee + marginSafety.
-  const profitability = round2(platformFee + marginSafety);
+  // El staff recibe el 100% de la propina. Sin excepciones.
+  const staffNet = round2(tipAmountDop);
 
   return {
-    visibleAmount: round2(visibleAmountDop),
+    tipAmount: round2(tipAmountDop),
+    customerFee: round2(customerFeeDop),
+    visibleAmount,
     stripeProcessingFee,
     stripeConversionFee,
-    platformFee,
-    marginSafety,
+    // Comisión al staff — siempre 0 en este modelo.
+    platformFee: 0,
+    marginSafety: 0,
     staffNet,
     totalProcessingCost,
-    profitability,
+    // El ingreso de TipApp en esta transacción es el fee cobrado al cliente.
+    profitability: round2(customerFeeDop),
     exchangeRate: fxRate,
     currency: walletUsed ? "dop" : chargedCurrency,
     paymentMethod,

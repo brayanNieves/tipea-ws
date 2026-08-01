@@ -2,45 +2,52 @@ import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { admin, db } from "../../config/firebase";
 import { mailer } from "../../mailer_service";
 import { getToday } from "../../shared/utils/date";
-import { calculateCommission } from "./tip.service";
 import { evaluateTip } from "./suspicion.service";
 import { tipperRepo } from "../tippers/tipper.repository";
-import { planCommissionFraction, pricingService } from "../pricing/pricing.service";
+import { pricingService } from "../pricing/pricing.service";
+import { customerFeeRepo } from "../payments/customer-fee.repository";
+import { calculateCustomerFee } from "../payments/service-fee";
 import type {
   TipPricingLedger,
   TipPricingPaymentMethod,
 } from "../../types";
 
 /**
- * Resolve the commission/net values + the pricing ledger for a tip.
+ * Resuelve el pago al staff + el fee al cliente + el ledger de pricing.
  *
- * Three cases:
- *   1. Tip already has a `pricing` block (wallet path, or direct path when
- *      the FE attached the engine output from `createPaymentIntent`) →
- *      use it as-is. Its `platformFee` already reflects the staff's plan
- *      tier because the upstream callable resolved it.
- *   2. Tip lacks `pricing` but is recent → compute one using the staff's
- *      `plan.commissionPct` and write it back so /tips is uniform.
- *   3. Pricing engine itself errors → fall back to the legacy
- *      `calculateCommission(amount, plan.commissionPct)` path so the tip
- *      still settles with the right rate. Should never trigger in practice.
+ * REGLA DEL MODELO: el staff recibe SIEMPRE el 100% de la propina.
+ *   pago al staff  = tipAmount
+ *   comisión       = 0
+ *   ingreso TipApp = feeCharged (cobrado al cliente, registrado aparte)
+ *
+ * Tres casos:
+ *   1. El tip ya trae un bloque `pricing` (path de wallet, o path directo
+ *      cuando el FE adjuntó la salida del engine desde createPaymentIntent)
+ *      → se usa tal cual.
+ *   2. No trae `pricing` → se calcula uno leyendo /config/customerFee y se
+ *      escribe de vuelta para que /tips quede uniforme.
+ *   3. El engine falla → fallback sin fee: el staff igual cobra el 100%.
  */
-async function resolvePricing(tip: FirebaseFirestore.DocumentData, planCommissionPct: number) {
+async function resolvePricing(tip: FirebaseFirestore.DocumentData) {
+  // La propina es lo que recibe el staff. `amount` se mantiene como campo
+  // canónico; `tipAmount` es el alias explícito que escribe el FE nuevo.
+  const tipAmount: number = tip.tipAmount ?? tip.amount;
+
   const existing = tip.pricing as TipPricingLedger | undefined;
-  if (existing && typeof existing.platformFee === "number" && typeof existing.staffNet === "number") {
-    const commissionPct = existing.visibleAmount > 0
-      ? Math.round((existing.platformFee / existing.visibleAmount) * 1000) / 10
-      : planCommissionPct;
+  if (existing && typeof existing.staffNet === "number") {
     return {
-      commissionPct,
-      commissionAmt: existing.platformFee,
-      netAmount: existing.staffNet,
+      commissionPct: 0,
+      commissionAmt: 0,
+      // Defensa: si un ledger viejo trae un staffNet recortado, gana la propina.
+      netAmount: tipAmount,
+      feeCharged: existing.customerFee ?? tip.feeCharged ?? 0,
+      customerPaid: existing.visibleAmount ?? tip.customerPaid ?? tipAmount,
       pricing: existing,
       computed: false,
     };
   }
 
-  // No ledger yet — derive payment method from tip flags.
+  // Sin ledger — derivar el método de pago desde los flags del tip.
   const paymentMethod: TipPricingPaymentMethod = tip.paidFromWallet
     ? "wallet"
     : tip.paymentMethod === "apple_pay" || tip.paymentMethod === "google_pay"
@@ -49,28 +56,41 @@ async function resolvePricing(tip: FirebaseFirestore.DocumentData, planCommissio
   const chargedCurrency = tip.paidFromWallet ? "dop" : "usd";
 
   try {
+    // Si el doc ya trae el fee cobrado, se respeta; si no, se recalcula
+    // desde la config vigente.
+    let feeCharged: number = tip.feeCharged;
+    if (typeof feeCharged !== "number" || !Number.isFinite(feeCharged) || feeCharged < 0) {
+      const cfg = await customerFeeRepo.read();
+      feeCharged = calculateCustomerFee(tipAmount, cfg.percentageFee, cfg.fixedFee).totalFee;
+    }
+
     const pricing = await pricingService.breakdownFor(
-      tip.amount,
+      tipAmount,
       paymentMethod,
       chargedCurrency,
-      planCommissionFraction(planCommissionPct)
+      feeCharged
     );
     return {
-      commissionPct: planCommissionPct,
-      commissionAmt: pricing.platformFee,
-      netAmount: pricing.staffNet,
+      commissionPct: 0,
+      commissionAmt: 0,
+      netAmount: pricing.staffNet, // === tipAmount
+      feeCharged: pricing.customerFee,
+      customerPaid: pricing.visibleAmount,
       pricing,
       computed: true,
     };
   } catch (err) {
-    // True last-resort: fall back to plan-based math so the tip still
-    // settles. Surfaces a log line so we know to investigate.
-    console.warn(
-      `[onTipCreated] pricing engine failed; falling back to plan.commissionPct=${planCommissionPct}`,
-      err
-    );
-    const legacy = calculateCommission(tip.amount, planCommissionPct ?? 0);
-    return { ...legacy, pricing: undefined as TipPricingLedger | undefined, computed: false };
+    // Último recurso: el tip igual se liquida y el staff igual cobra el 100%.
+    console.warn(`[onTipCreated] pricing engine falló; liquidando sin fee`, err);
+    return {
+      commissionPct: 0,
+      commissionAmt: 0,
+      netAmount: tipAmount,
+      feeCharged: typeof tip.feeCharged === "number" ? tip.feeCharged : 0,
+      customerPaid: typeof tip.customerPaid === "number" ? tip.customerPaid : tipAmount,
+      pricing: undefined as TipPricingLedger | undefined,
+      computed: false,
+    };
   }
 }
 
@@ -113,14 +133,18 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
     const plan = planSnap.data();
     if (!plan) throw new Error(`Plan not found: ${user.planId}`);
 
-    // ── 4. Resolve commission via the pricing engine ─────────
-    // Prefers the tip's pre-attached `pricing` block; falls back to
-    // computing one (and ultimately to plan.commissionPct if the engine
-    // itself can't run).
-    const { commissionPct, commissionAmt, netAmount, pricing, computed } = await resolvePricing(
-      tip,
-      plan.commissionPct ?? 0
-    );
+    // ── 4. Resolver el pago al staff y el fee al cliente ─────
+    // El staff recibe el 100%: commissionAmt siempre 0, netAmount = propina.
+    const {
+      commissionPct,
+      commissionAmt,
+      netAmount,
+      feeCharged,
+      customerPaid,
+      pricing,
+      computed,
+    } = await resolvePricing(tip);
+    const tipAmount: number = tip.tipAmount ?? tip.amount;
 
     // ── 4.5. Detect suspicious activity ──────────────────────
     const { isSuspicious, reasons: suspicionReasons } = await evaluateTip({
@@ -141,9 +165,13 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
     const resolvedStatus = isDevTip ? (tip.status ?? "paid") : "pending";
 
     const tipUpdate: Record<string, unknown> = {
-      commissionPct,
-      commissionAmt,
-      netAmount,
+      commissionPct, // 0 — al staff no se le descuenta nada
+      commissionAmt, // 0
+      netAmount, // === tipAmount, el 100% de la propina
+      // Desglose del fee al cliente (ingreso de TipApp).
+      tipAmount,
+      feeCharged,
+      customerPaid,
       status: resolvedStatus,
       processedAt: admin.firestore.FieldValue.serverTimestamp(),
       suspicious: isSuspicious,
@@ -162,10 +190,13 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
       userRole: user.role,
       sourceId: tipId,
       sourceType: "tip",
-      grossAmount: tip.amount,
-      commissionPct,
-      commissionAmt,
-      netAmount,
+      grossAmount: tipAmount,
+      commissionPct, // 0
+      commissionAmt, // 0 — al staff no se le descuenta nada
+      netAmount, // el staff recibe el 100%
+      // El ingreso real de TipApp es el fee que pagó el cliente.
+      feeCharged,
+      customerPaid,
       status: "pending",
       settledAt: null,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -174,12 +205,13 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
     const notifRef = db.collection("notifications").doc();
     batch.set(notifRef, {
       type: "new_tip",
-      message: `${user.name} (${user.role}) received $${tip.amount} tip — your cut: $${commissionAmt}`,
+      message: `${user.name} (${user.role}) recibió una propina de RD$ ${tipAmount} — fee al cliente: RD$ ${feeCharged}`,
       userId: tip.userId,
       role: user.role,
       tipId,
-      amount: tip.amount,
-      commissionAmt,
+      amount: tipAmount,
+      commissionAmt, // 0
+      feeCharged,
       read: false,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
@@ -210,11 +242,14 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
     await Promise.all([
       db.runTransaction(async (tx) => {
         const summarySnap = await tx.get(summaryRef);
+        // `totalCommissions` sigue siendo el KPI de ingreso del admin, pero
+        // ahora se alimenta del fee al cliente (antes era la comisión al staff).
         if (!summarySnap.exists) {
           tx.set(summaryRef, {
             date: today,
-            totalGross: tip.amount,
-            totalCommissions: commissionAmt,
+            totalGross: tipAmount,
+            totalCommissions: feeCharged,
+            totalCustomerFees: feeCharged,
             totalPaidOut: 0,
             totalPending: netAmount,
             tipCount: 1,
@@ -224,8 +259,9 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
           });
         } else {
           tx.update(summaryRef, {
-            totalGross: admin.firestore.FieldValue.increment(tip.amount),
-            totalCommissions: admin.firestore.FieldValue.increment(commissionAmt),
+            totalGross: admin.firestore.FieldValue.increment(tipAmount),
+            totalCommissions: admin.firestore.FieldValue.increment(feeCharged),
+            totalCustomerFees: admin.firestore.FieldValue.increment(feeCharged),
             totalPending: admin.firestore.FieldValue.increment(netAmount),
             tipCount: admin.firestore.FieldValue.increment(1),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -235,14 +271,17 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
 
       db.runTransaction(async (tx) => {
         const statsSnap = await tx.get(statsRef);
+        // `commissionAmt` queda en 0 (al staff no se le descuenta nada);
+        // `feeCollected` acumula lo que pagó el cliente por este usuario.
         if (!statsSnap.exists) {
           tx.set(statsRef, {
             userId: tip.userId,
             userName: user.name,
             role: user.role,
             date: today,
-            totalGross: tip.amount,
+            totalGross: tipAmount,
             commissionAmt,
+            feeCollected: feeCharged,
             netEarned: netAmount,
             tipCount: 1,
             pending: netAmount,
@@ -251,8 +290,9 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
           });
         } else {
           tx.update(statsRef, {
-            totalGross: admin.firestore.FieldValue.increment(tip.amount),
+            totalGross: admin.firestore.FieldValue.increment(tipAmount),
             commissionAmt: admin.firestore.FieldValue.increment(commissionAmt),
+            feeCollected: admin.firestore.FieldValue.increment(feeCharged),
             netEarned: admin.firestore.FieldValue.increment(netAmount),
             tipCount: admin.firestore.FieldValue.increment(1),
             pending: admin.firestore.FieldValue.increment(netAmount),
@@ -266,7 +306,7 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
     if (user.emailVerified && user.email) {
       await mailer.sendTipStaffEmail({
         tipId,
-        amount: tip.amount,
+        amount: tipAmount,
         commissionPct,
         commissionAmt,
         netAmount,
@@ -287,8 +327,9 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
 
     console.log(
       `✅ [onTipCreated] tipId=${tipId} | user=${user.name} | ` +
-        `gross=$${tip.amount} | commission=$${commissionAmt} | net=$${netAmount} | ` +
-        `pricingSrc=${pricing ? (computed ? "computed" : "attached") : "legacy-plan"} | ` +
+        `tip=RD$${tipAmount} | staffNet=RD$${netAmount} (100%) | ` +
+        `customerFee=RD$${feeCharged} | customerPaid=RD$${customerPaid} | ` +
+        `pricingSrc=${pricing ? (computed ? "computed" : "attached") : "none"} | ` +
         `suspicious=${isSuspicious}`
     );
 
