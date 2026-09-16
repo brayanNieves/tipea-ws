@@ -152,6 +152,12 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ── cybersourceSessions ────────────────────────────────
+    // Apple Pay / Google Pay sessions (Cybersource). Functions only.
+    match /cybersourceSessions/{sessionId} {
+      allow read, write: if false;
+    }
+
     // ── tippers ──────────────────────────────────────────
     // Per-uid wallet + onboarding state. Callable-only (getTipper /
     // markOnboardingSeen / createWalletTopupIntent / confirmWalletTopup /

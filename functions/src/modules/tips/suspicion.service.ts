@@ -1,4 +1,5 @@
-import { admin, db } from "../../config/firebase";
+import { db } from "../../config/firebase";
+import { Timestamp } from "firebase-admin/firestore";
 
 export interface SuspicionInput {
   userId: string;
@@ -30,7 +31,7 @@ export async function evaluateTip(input: SuspicionInput): Promise<SuspicionResul
   const recentTipsSnap = await db
     .collection("tips")
     .where("userId", "==", input.userId)
-    .where("createdAt", ">=", admin.firestore.Timestamp.fromDate(fiveMinutesAgo))
+    .where("createdAt", ">=", Timestamp.fromDate(fiveMinutesAgo))
     .get();
 
   if (recentTipsSnap.size > 1) {

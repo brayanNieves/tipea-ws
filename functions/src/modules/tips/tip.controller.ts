@@ -1,6 +1,7 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { admin, db } from "../../config/firebase";
+import { db } from "../../config/firebase";
 import { mailer } from "../../mailer_service";
+import { FieldValue } from "firebase-admin/firestore";
 
 // ─────────────────────────────────────────────────────────────
 // createTip (HTTP Callable API)
@@ -34,7 +35,7 @@ export const createTip = onCall(async (request) => {
       senderUid: request.auth.uid,
       amount,
       status: "pending",
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
 
     console.log(

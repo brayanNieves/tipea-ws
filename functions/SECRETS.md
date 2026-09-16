@@ -22,6 +22,17 @@ Ahí vas a ver la lista de todos los secretos del proyecto:
 | `SPOTIFY_CLIENT_ID` | `searchTracks` (interno) | Client ID de la app de Spotify Developer |
 | `SPOTIFY_CLIENT_SECRET` | `searchTracks` (interno) | Client Secret de la app de Spotify Developer |
 | `SEARCH_TRACKS_API_KEY` | `searchTracks` | API key propia que protege el endpoint público |
+| `CYBERSOURCE_MERCHANT_ID` | `createCybersourceSession`, `chargeCybersourceTip` | Merchant ID de Cybersource (VisaNet DR) |
+| `CYBERSOURCE_API_KEY_ID` | `createCybersourceSession`, `chargeCybersourceTip` | Key ID de la llave REST – Shared Secret |
+| `CYBERSOURCE_SECRET_KEY` | `createCybersourceSession`, `chargeCybersourceTip` | Shared Secret de la llave REST (base64) |
+
+Parámetros **no secretos** de Cybersource (van en `functions/.env`, tienen default):
+
+| Parámetro | Default | Descripción |
+|---|---|---|
+| `CYBERSOURCE_API_HOST` | `apitest.cybersource.com` | `api.cybersource.com` en producción |
+| `CYBERSOURCE_TARGET_ORIGINS` | `https://tipapp.tech` | CSV de orígenes que cargan Unified Checkout. **El dominio de Apple Pay va primero** (Apple Pay solo acepta uno) |
+| `CYBERSOURCE_SECRET_ENCODING` | `base64` | `hex` solo si el Shared Secret viene en hexadecimal |
 
 #### Para ver el VALOR de un secret desde la consola:
 

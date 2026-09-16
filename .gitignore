@@ -19,6 +19,7 @@ functions/*.test.js
 # Environment
 .env
 .env.local
+functions/.secret.local
 serviceAccount.json
 *-service-account.json
 

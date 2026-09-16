@@ -1,5 +1,6 @@
-import { admin, db } from "../../config/firebase";
+import { db } from "../../config/firebase";
 import { Tipper, WalletEventType } from "../../types";
+import { FieldValue } from "firebase-admin/firestore";
 
 const tippersCol = () => db.collection("tippers");
 const topupsCol = () => db.collection("topups");
@@ -51,7 +52,7 @@ export const tipperRepo = {
   /** Idempotent — only sets the flag if not already set. */
   async markOnboardingSeen(uid: string): Promise<void> {
     const ref = tippersCol().doc(uid);
-    const now = admin.firestore.FieldValue.serverTimestamp();
+    const now = FieldValue.serverTimestamp();
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       if (!snap.exists) {
@@ -107,7 +108,7 @@ export const tipperRepo = {
       }
 
       const snap = await tx.get(ref);
-      const now = admin.firestore.FieldValue.serverTimestamp();
+      const now = FieldValue.serverTimestamp();
 
       if (!snap.exists) {
         tx.set(ref, {
@@ -122,8 +123,8 @@ export const tipperRepo = {
         });
       } else {
         tx.update(ref, {
-          walletBalance: admin.firestore.FieldValue.increment(amount),
-          totalLoaded: admin.firestore.FieldValue.increment(amount),
+          walletBalance: FieldValue.increment(amount),
+          totalLoaded: FieldValue.increment(amount),
           hasSeenWalletOnboarding: true,
           updatedAt: now,
         });
@@ -173,10 +174,10 @@ export const tipperRepo = {
       const cur = data.walletBalance ?? 0;
       if (cur < amount) throw new Error("INSUFFICIENT_WALLET");
 
-      const now = admin.firestore.FieldValue.serverTimestamp();
+      const now = FieldValue.serverTimestamp();
       tx.update(ref, {
-        walletBalance: admin.firestore.FieldValue.increment(-amount),
-        totalSpentFromWallet: admin.firestore.FieldValue.increment(amount),
+        walletBalance: FieldValue.increment(-amount),
+        totalSpentFromWallet: FieldValue.increment(amount),
         // counter increments handled by onTipCreated trigger
         updatedAt: now,
       });
@@ -193,7 +194,7 @@ export const tipperRepo = {
    */
   async recordTip(uid: string, amount: number): Promise<void> {
     const ref = tippersCol().doc(uid);
-    const now = admin.firestore.FieldValue.serverTimestamp();
+    const now = FieldValue.serverTimestamp();
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       if (!snap.exists) {
@@ -210,8 +211,8 @@ export const tipperRepo = {
         });
       } else {
         tx.update(ref, {
-          totalTipsCount: admin.firestore.FieldValue.increment(1),
-          totalTipsAmount: admin.firestore.FieldValue.increment(amount),
+          totalTipsCount: FieldValue.increment(1),
+          totalTipsAmount: FieldValue.increment(amount),
           updatedAt: now,
           lastTipAt: now,
         });
@@ -234,7 +235,7 @@ export const tipperRepo = {
       ...(amount !== undefined ? { amount } : {}),
       ...(staffId ? { staffId } : {}),
       ...(paymentIntentId ? { paymentIntentId } : {}),
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
   },
 };

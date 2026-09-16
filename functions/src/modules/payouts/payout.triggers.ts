@@ -1,7 +1,8 @@
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
-import { admin, db } from "../../config/firebase";
+import { db } from "../../config/firebase";
 import { mailer } from "../../mailer_service";
 import { getToday } from "../../shared/utils/date";
+import { FieldValue } from "firebase-admin/firestore";
 
 // ─────────────────────────────────────────────────────────────
 // onPayoutCreated
@@ -51,8 +52,8 @@ export const onPayoutCreated = onDocumentCreated(
         commissionPct: 0,
         commissionAmt: payout.commissionAmt,
         status: "settled",
-        settledAt: admin.firestore.FieldValue.serverTimestamp(),
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        settledAt: FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
       });
 
       const notifRef = db.collection("notifications").doc();
@@ -63,7 +64,7 @@ export const onPayoutCreated = onDocumentCreated(
         payoutId,
         amount: payout.netToUser,
         read: false,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
       });
 
       await batch.commit();
@@ -73,15 +74,15 @@ export const onPayoutCreated = onDocumentCreated(
 
       await Promise.all([
         statsRef.update({
-          pending: admin.firestore.FieldValue.increment(-payout.netToUser),
-          paidOut: admin.firestore.FieldValue.increment(payout.netToUser),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          pending: FieldValue.increment(-payout.netToUser),
+          paidOut: FieldValue.increment(payout.netToUser),
+          updatedAt: FieldValue.serverTimestamp(),
         }),
 
         summaryRef.update({
-          totalPaidOut: admin.firestore.FieldValue.increment(payout.netToUser),
-          totalPending: admin.firestore.FieldValue.increment(-payout.netToUser),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          totalPaidOut: FieldValue.increment(payout.netToUser),
+          totalPending: FieldValue.increment(-payout.netToUser),
+          updatedAt: FieldValue.serverTimestamp(),
         }),
       ]);
 
@@ -123,7 +124,7 @@ export const onPayoutCreated = onDocumentCreated(
         .update({
           status: "error",
           errorMessage: error instanceof Error ? error.message : String(error),
-          errorAt: admin.firestore.FieldValue.serverTimestamp(),
+          errorAt: FieldValue.serverTimestamp(),
         })
         .catch(() => {
           /* noop */

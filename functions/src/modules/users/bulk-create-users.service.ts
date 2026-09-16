@@ -6,6 +6,7 @@ import type {
   BulkCreateUsersResponse,
 } from "./bulk-create-users.types";
 import type { UserRole } from "./user.types";
+import { FieldValue } from "firebase-admin/firestore";
 
 const VALID_ROLES: UserRole[] = ["dj", "waiter", "vallet", "bartender", "other"];
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -131,7 +132,7 @@ async function createOne(
         planId: "plan_starter",
         active: true,
         emailVerified: false,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
       },
       { merge: true }
     );

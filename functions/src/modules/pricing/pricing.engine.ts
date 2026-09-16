@@ -20,6 +20,7 @@ import type {
   PricingBreakdown,
   PricingCurrency,
   PricingPaymentMethod,
+  PricingProcessor,
 } from "./pricing.types";
 
 // Stripe's standard international card pricing.
@@ -50,13 +51,17 @@ function round2(n: number): number {
  * @param customerFeeDop  fee charged to the customer on top of the tip (DOP).
  *                        Computed with `calculateCustomerFee` from
  *                        /config/customerFee.
+ * @param processor       gateway that charges the customer. Stripe fees are
+ *                        only estimated for 'stripe'; Cybersource costs are
+ *                        not modeled yet (0).
  */
 export function computeBreakdown(
   tipAmountDop: number,
   fxRate: number,
   paymentMethod: PricingPaymentMethod,
   chargedCurrency: PricingCurrency = "usd",
-  customerFeeDop: number = 0
+  customerFeeDop: number = 0,
+  processor: PricingProcessor = "stripe"
 ): PricingBreakdown {
   if (!Number.isFinite(tipAmountDop) || tipAmountDop <= 0) {
     throw new Error(`computeBreakdown: invalid tipAmount=${tipAmountDop}`);
@@ -76,7 +81,7 @@ export function computeBreakdown(
   let stripeProcessingFee = 0;
   let stripeConversionFee = 0;
 
-  if (!walletUsed) {
+  if (!walletUsed && processor === "stripe") {
     // Informational: Stripe's cost is computed on the total charged, but it
     // is NOT deducted from the staff — TipApp absorbs it.
     const amountUsd = visibleAmount / fxRate;
@@ -111,5 +116,6 @@ export function computeBreakdown(
     currency: walletUsed ? "dop" : chargedCurrency,
     paymentMethod,
     walletUsed,
+    processor,
   };
 }

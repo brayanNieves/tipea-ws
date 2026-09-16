@@ -10,6 +10,7 @@
  */
 
 import * as admin from "firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -71,10 +72,10 @@ async function seed() {
         holderCedula: "001-1234567-8",
         holderPhone: "809-555-0001",
         verified: true,
-        addedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        addedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       },
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     },
     {
       id: "user_maria",
@@ -94,10 +95,10 @@ async function seed() {
         holderCedula: "001-9876543-2",
         holderPhone: "809-555-0002",
         verified: true,
-        addedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        addedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       },
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     },
     {
       id: "user_pedro",
@@ -109,7 +110,7 @@ async function seed() {
       pin: null,
       active: true,
       bankAccount: null, // no bank account yet
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     },
   ];
 
@@ -133,7 +134,7 @@ async function seed() {
     await db.collection("tips").add({
       ...tip,
       payoutId: null,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
   }
   console.log(`✓ ${tips.length} sample tips created`);

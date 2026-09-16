@@ -1,10 +1,11 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { admin, db } from "../../config/firebase";
+import { db } from "../../config/firebase";
 import { buildStripeClient, stripeSecretKey } from "../../config/stripe";
 import { customerIdFromPhone, isValidDoPhone, normalizePhone } from "../../shared/utils/customer-id";
 import { balanceRepo } from "./balance.repository";
 import { customerFeeRepo } from "../payments/customer-fee.repository";
 import { calculateCustomerFee } from "../payments/service-fee";
+import { FieldValue } from "firebase-admin/firestore";
 
 const MIN_TOPUP_DOP = 200;
 
@@ -249,12 +250,12 @@ export const tipFromBalance = onCall(async (request) => {
           payoutId: null,
           stripePaymentIntentId: null,
           paymentMethod: "balance",
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          createdAt: FieldValue.serverTimestamp(),
           songRequest: songRequest ?? null,
           rating: rating ?? null,
           comment: comment && typeof comment === "string" ? comment.trim() || null : null,
           ratedAt:
-            typeof rating === "number" ? admin.firestore.FieldValue.serverTimestamp() : null,
+            typeof rating === "number" ? FieldValue.serverTimestamp() : null,
         });
       },
     });

@@ -30,6 +30,12 @@ export { sendOtp, verifyOtp } from "./modules/auth/otp.controller";
 // Payments (Stripe)
 export { createPaymentIntent } from "./modules/payments/payment.controller";
 
+// Payments (Cybersource — Apple Pay / Google Pay for the Dominican Republic)
+export {
+  createCybersourceSession,
+  chargeCybersourceTip,
+} from "./modules/cybersource/cybersource.controller";
+
 // Customer balances / top-ups (legacy phone-based flow — kept for back-compat)
 export {
   lookupBalance,

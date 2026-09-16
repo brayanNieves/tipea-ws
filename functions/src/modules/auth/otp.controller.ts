@@ -1,5 +1,5 @@
 import { onRequest } from "firebase-functions/v2/https";
-import { admin, db } from "../../config/firebase";
+import { db } from "../../config/firebase";
 import { mailer } from "../../mailer_service";
 import { corsHandler } from "../../shared/utils/cors";
 import {
@@ -7,6 +7,7 @@ import {
   OTP_MAX_ATTEMPTS,
   OTP_RATE_LIMIT_SECONDS,
 } from "./otp.constants";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
 // ─────────────────────────────────────────────────────────────
 // sendOtp
@@ -54,9 +55,9 @@ export const sendOtp = onRequest((req, res) => {
 
     await otpRef.set({
       code: otp,
-      expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
+      expiresAt: Timestamp.fromDate(expiresAt),
       attempts: 0,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
 
     const sent = await mailer.sendOtpMail(email, otp, OTP_EXPIRES_MINUTES);
@@ -114,7 +115,7 @@ export const verifyOtp = onRequest((req, res) => {
 
         const data = snap.data()!;
         const attempts: number = data.attempts ?? 0;
-        const expiresAt = (data.expiresAt as admin.firestore.Timestamp).toDate();
+        const expiresAt = (data.expiresAt as Timestamp).toDate();
 
         if (attempts >= OTP_MAX_ATTEMPTS) {
           tx.delete(otpRef);
@@ -132,7 +133,7 @@ export const verifyOtp = onRequest((req, res) => {
         }
 
         if (data.code !== code) {
-          tx.update(otpRef, { attempts: admin.firestore.FieldValue.increment(1) });
+          tx.update(otpRef, { attempts: FieldValue.increment(1) });
           const remaining = OTP_MAX_ATTEMPTS - attempts - 1;
           throw Object.assign(new Error(`Incorrect code. ${remaining} attempt(s) remaining.`), {
             status: 400,

@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
-import { admin, db } from "../../config/firebase";
+import { db } from "../../config/firebase";
 import { normalizeEmail } from "../auth/otp.service";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
 /** Stable hash for using email as a Firestore doc id. */
 export function emailHash(rawEmail: string): string {
@@ -13,13 +14,13 @@ const emailCanonCol = () => db.collection("email_canon_uid");
 interface UidToCanon {
   email: string;
   canonUid: string;
-  verifiedAt: admin.firestore.Timestamp;
+  verifiedAt: Timestamp;
 }
 
 interface EmailCanon {
   email: string;
   canonUid: string;
-  firstVerifiedAt: admin.firestore.Timestamp;
+  firstVerifiedAt: Timestamp;
 }
 
 /**
@@ -44,7 +45,7 @@ export async function recordEmailVerification(
 
   return db.runTransaction(async (tx) => {
     const canonSnap = await tx.get(canonRef);
-    const now = admin.firestore.FieldValue.serverTimestamp();
+    const now = FieldValue.serverTimestamp();
 
     let canonUid: string;
     if (!canonSnap.exists) {

@@ -1,5 +1,6 @@
-import { admin, db } from "../../config/firebase";
+import { db } from "../../config/firebase";
 import { Balance } from "../../types";
+import { FieldValue } from "firebase-admin/firestore";
 
 const balancesCol = () => db.collection("balances");
 const topupsCol = () => db.collection("topups");
@@ -61,7 +62,7 @@ export const balanceRepo = {
       }
 
       const balSnap = await tx.get(balanceRef);
-      const now = admin.firestore.FieldValue.serverTimestamp();
+      const now = FieldValue.serverTimestamp();
 
       if (!balSnap.exists) {
         tx.set(balanceRef, {
@@ -75,8 +76,8 @@ export const balanceRepo = {
         });
       } else {
         tx.update(balanceRef, {
-          balance: admin.firestore.FieldValue.increment(amount),
-          totalLoaded: admin.firestore.FieldValue.increment(amount),
+          balance: FieldValue.increment(amount),
+          totalLoaded: FieldValue.increment(amount),
           lastUsedAt: now,
           // backfill phone/email if missing
           ...(balSnap.data()?.phone ? {} : { phone }),
@@ -125,10 +126,10 @@ export const balanceRepo = {
         throw new Error("INSUFFICIENT_BALANCE");
       }
 
-      const now = admin.firestore.FieldValue.serverTimestamp();
+      const now = FieldValue.serverTimestamp();
       tx.update(balanceRef, {
-        balance: admin.firestore.FieldValue.increment(-amount),
-        totalTipped: admin.firestore.FieldValue.increment(amount),
+        balance: FieldValue.increment(-amount),
+        totalTipped: FieldValue.increment(amount),
         lastUsedAt: now,
       });
 

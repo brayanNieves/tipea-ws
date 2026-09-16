@@ -1,7 +1,8 @@
 import * as functions from "firebase-functions/v1";
-import { admin, db } from "../../config/firebase";
+import { db } from "../../config/firebase";
 import { mailer } from "../../mailer_service";
 import { getYesterday } from "../../shared/utils/date";
+import { FieldValue } from "firebase-admin/firestore";
 
 // ─────────────────────────────────────────────────────────────
 // onDayRollover
@@ -25,7 +26,7 @@ export const onDayRollover = functions.pubsub
 
       await summaryRef.update({
         closed: true,
-        closedAt: admin.firestore.FieldValue.serverTimestamp(),
+        closedAt: FieldValue.serverTimestamp(),
       });
 
       console.log(`✅ [onDayRollover] Day ${yesterday} closed successfully`);

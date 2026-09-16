@@ -16,6 +16,7 @@ import type {
   PricingBreakdown,
   PricingCurrency,
   PricingPaymentMethod,
+  PricingProcessor,
 } from "./pricing.types";
 
 export const pricingService = {
@@ -45,8 +46,16 @@ export const pricingService = {
     fxRate: number,
     paymentMethod: PricingPaymentMethod,
     chargedCurrency: PricingCurrency = "usd",
-    customerFeeDop: number = 0
+    customerFeeDop: number = 0,
+    processor: PricingProcessor = "stripe"
   ): PricingBreakdown {
-    return computeBreakdown(tipAmountDop, fxRate, paymentMethod, chargedCurrency, customerFeeDop);
+    return computeBreakdown(
+      tipAmountDop,
+      fxRate,
+      paymentMethod,
+      chargedCurrency,
+      customerFeeDop,
+      processor
+    );
   },
 };

@@ -1,4 +1,4 @@
-import * as admin from "firebase-admin";
+import { Timestamp } from "firebase-admin/firestore";
 
 // ─────────────────────────────────────────────────────────────
 // USERS
@@ -14,8 +14,8 @@ export interface BankAccount {
   holderCedula: string;
   holderPhone: string;
   verified: boolean;
-  addedAt: admin.firestore.Timestamp;
-  updatedAt: admin.firestore.Timestamp;
+  addedAt: Timestamp;
+  updatedAt: Timestamp;
 }
 
 export interface User {
@@ -27,7 +27,7 @@ export interface User {
   pin: string | null;
   active: boolean;
   bankAccount: BankAccount | null;
-  createdAt: admin.firestore.Timestamp;
+  createdAt: Timestamp;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -75,6 +75,7 @@ export interface TipPricingLedger {
   currency: TipPricingCurrency;
   paymentMethod: TipPricingPaymentMethod;
   walletUsed: boolean;             // true when paid from wallet (no Stripe at tip time)
+  processor?: "stripe" | "cybersource"; // gateway that charged; absent on legacy rows
 }
 
 export interface Tip {
@@ -95,8 +96,10 @@ export interface Tip {
   source: TipSource;
   status: TipStatus;
   payoutId: string | null;
-  createdAt: admin.firestore.Timestamp;
+  createdAt: Timestamp;
   pricing?: TipPricingLedger;      // populated for tips created post-pricing-engine rollout
+  paymentProcessor?: "stripe" | "cybersource"; // absent on legacy rows (= stripe)
+  cybersourcePaymentId?: string | null;        // /pts/v2/payments id when paid via Cybersource
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -108,8 +111,8 @@ export interface Balance {
   balance: number;                            // current available balance (DOP)
   totalLoaded: number;                        // sum of all top-ups ever
   totalTipped: number;                        // sum of all balance-paid tips ever
-  createdAt: admin.firestore.Timestamp;
-  lastUsedAt: admin.firestore.Timestamp;
+  createdAt: Timestamp;
+  lastUsedAt: Timestamp;
 }
 
 // Append-only ledger of every successful top-up.
@@ -127,7 +130,7 @@ export interface Topup {
   tipappCost?: number;                        // DOP — total fees absorbed by TipApp on this top-up
   exchangeRate?: number;                      // DOP per USD used at top-up time
   netAmount: number;                          // amount credited to balance (== gross: TipApp absorbs Stripe fee)
-  createdAt: admin.firestore.Timestamp;
+  createdAt: Timestamp;
   stripePaymentIntentId: string;
 }
 
@@ -143,9 +146,9 @@ export interface Tipper {
   totalLoaded: number;                        // sum of all wallet top-ups
   totalSpentFromWallet: number;               // sum of tips paid from wallet
   hasSeenWalletOnboarding: boolean;           // sticky once shown — prevents nagging
-  createdAt: admin.firestore.Timestamp;
-  updatedAt: admin.firestore.Timestamp;
-  lastTipAt?: admin.firestore.Timestamp;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  lastTipAt?: Timestamp;
 }
 
 // Append-only event log for analytics. Drives "onboarding shown",
@@ -167,7 +170,7 @@ export interface WalletEvent {
   amount?: number;
   staffId?: string;
   paymentIntentId?: string;
-  createdAt: admin.firestore.Timestamp;
+  createdAt: Timestamp;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -189,11 +192,11 @@ export interface Payout {
   holderName: string;
   referenceNumber: string | null;
   receiptUrl: string | null;
-  receiptUploadedAt: admin.firestore.Timestamp | null;
-  transferDate: admin.firestore.Timestamp;
+  receiptUploadedAt: Timestamp | null;
+  transferDate: Timestamp;
   notes: string | null;
   status: PayoutStatus;
-  createdAt: admin.firestore.Timestamp;
+  createdAt: Timestamp;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -212,8 +215,8 @@ export interface Commission {
   commissionPct: number;
   commissionAmt: number;
   status: CommissionStatus;
-  settledAt: admin.firestore.Timestamp | null;
-  createdAt: admin.firestore.Timestamp;
+  settledAt: Timestamp | null;
+  createdAt: Timestamp;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -228,8 +231,8 @@ export interface DailySummary {
   tipCount: number;
   activeUsers: number;
   closed: boolean;
-  closedAt?: admin.firestore.Timestamp;
-  updatedAt: admin.firestore.Timestamp;
+  closedAt?: Timestamp;
+  updatedAt: Timestamp;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -246,7 +249,7 @@ export interface UserDailyStats {
   tipCount: number;
   pending: number;
   paidOut: number;
-  updatedAt: admin.firestore.Timestamp;
+  updatedAt: Timestamp;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -258,9 +261,9 @@ export interface Subscription {
   userId: string;
   planId: string;
   status: SubscriptionStatus;
-  startDate: admin.firestore.Timestamp;
+  startDate: Timestamp;
   renewalDate: Date;
-  canceledAt: admin.firestore.Timestamp | null;
+  canceledAt: Timestamp | null;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -278,5 +281,5 @@ export interface Notification {
   amount?: number;
   commissionAmt?: number;
   read: boolean;
-  createdAt: admin.firestore.Timestamp;
+  createdAt: Timestamp;
 }

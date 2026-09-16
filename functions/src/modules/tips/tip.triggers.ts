@@ -1,5 +1,5 @@
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
-import { admin, db } from "../../config/firebase";
+import { db } from "../../config/firebase";
 import { mailer } from "../../mailer_service";
 import { getToday } from "../../shared/utils/date";
 import { evaluateTip } from "./suspicion.service";
@@ -11,6 +11,7 @@ import type {
   TipPricingLedger,
   TipPricingPaymentMethod,
 } from "../../types";
+import { FieldValue } from "firebase-admin/firestore";
 
 /**
  * Resolve the staff payout + the customer fee + the pricing ledger.
@@ -173,7 +174,7 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
       feeCharged,
       customerPaid,
       status: resolvedStatus,
-      processedAt: admin.firestore.FieldValue.serverTimestamp(),
+      processedAt: FieldValue.serverTimestamp(),
       suspicious: isSuspicious,
       suspicionReasons: isSuspicious ? suspicionReasons : [],
       suspicionReviewed: false,
@@ -199,7 +200,7 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
       customerPaid,
       status: "pending",
       settledAt: null,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
 
     const notifRef = db.collection("notifications").doc();
@@ -213,7 +214,7 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
       commissionAmt, // 0
       feeCharged,
       read: false,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
 
     if (isSuspicious) {
@@ -225,7 +226,7 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
         tipId,
         reasons: suspicionReasons,
         read: false,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
       });
     }
 
@@ -255,16 +256,16 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
             tipCount: 1,
             activeUsers: 1,
             closed: false,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
           });
         } else {
           tx.update(summaryRef, {
-            totalGross: admin.firestore.FieldValue.increment(tipAmount),
-            totalCommissions: admin.firestore.FieldValue.increment(feeCharged),
-            totalCustomerFees: admin.firestore.FieldValue.increment(feeCharged),
-            totalPending: admin.firestore.FieldValue.increment(netAmount),
-            tipCount: admin.firestore.FieldValue.increment(1),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            totalGross: FieldValue.increment(tipAmount),
+            totalCommissions: FieldValue.increment(feeCharged),
+            totalCustomerFees: FieldValue.increment(feeCharged),
+            totalPending: FieldValue.increment(netAmount),
+            tipCount: FieldValue.increment(1),
+            updatedAt: FieldValue.serverTimestamp(),
           });
         }
       }),
@@ -286,17 +287,17 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
             tipCount: 1,
             pending: netAmount,
             paidOut: 0,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
           });
         } else {
           tx.update(statsRef, {
-            totalGross: admin.firestore.FieldValue.increment(tipAmount),
-            commissionAmt: admin.firestore.FieldValue.increment(commissionAmt),
-            feeCollected: admin.firestore.FieldValue.increment(feeCharged),
-            netEarned: admin.firestore.FieldValue.increment(netAmount),
-            tipCount: admin.firestore.FieldValue.increment(1),
-            pending: admin.firestore.FieldValue.increment(netAmount),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            totalGross: FieldValue.increment(tipAmount),
+            commissionAmt: FieldValue.increment(commissionAmt),
+            feeCollected: FieldValue.increment(feeCharged),
+            netEarned: FieldValue.increment(netAmount),
+            tipCount: FieldValue.increment(1),
+            pending: FieldValue.increment(netAmount),
+            updatedAt: FieldValue.serverTimestamp(),
           });
         }
       }),
@@ -341,7 +342,7 @@ export const onTipCreated = onDocumentCreated({ document: "tips/{tipId}" }, asyn
       .update({
         status: "error",
         errorMessage: error instanceof Error ? error.message : String(error),
-        errorAt: admin.firestore.FieldValue.serverTimestamp(),
+        errorAt: FieldValue.serverTimestamp(),
       })
       .catch(() => {
         /* noop */

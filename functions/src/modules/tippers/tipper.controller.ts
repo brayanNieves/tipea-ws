@@ -1,5 +1,5 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { admin, db } from "../../config/firebase";
+import { db } from "../../config/firebase";
 import { buildStripeClient, stripeSecretKey } from "../../config/stripe";
 import { tipperRepo } from "./tipper.repository";
 import { recordEmailVerification, resolveCanonUid } from "./email-link";
@@ -7,6 +7,7 @@ import { checkOtp, isValidEmail, normalizeEmail, requestOtp } from "../auth/otp.
 import { pricingService } from "../pricing/pricing.service";
 import { customerFeeRepo } from "../payments/customer-fee.repository";
 import { calculateCustomerFee } from "../payments/service-fee";
+import { FieldValue } from "firebase-admin/firestore";
 
 const MIN_WALLET_TOPUP_DOP = 200;
 
@@ -368,12 +369,12 @@ export const tipFromWallet = onCall(async (request) => {
           stripePaymentIntentId: null,
           paymentMethod: "wallet",
           pricing: walletPricing,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          createdAt: FieldValue.serverTimestamp(),
           songRequest: songRequest ?? null,
           rating: rating ?? null,
           comment: comment && typeof comment === "string" ? comment.trim() || null : null,
           ratedAt:
-            typeof rating === "number" ? admin.firestore.FieldValue.serverTimestamp() : null,
+            typeof rating === "number" ? FieldValue.serverTimestamp() : null,
         });
       },
     });

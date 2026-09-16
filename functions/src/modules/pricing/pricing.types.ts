@@ -20,6 +20,9 @@ export type PricingPaymentMethod =
 
 export type PricingCurrency = "dop" | "usd";
 
+/** Gateway that processed the charge. */
+export type PricingProcessor = "stripe" | "cybersource";
+
 export interface PricingBreakdown {
   /** The tip — what staff receive. DOP. Always 100% of it. */
   tipAmount: number;
@@ -51,4 +54,6 @@ export interface PricingBreakdown {
   paymentMethod: PricingPaymentMethod;
   /** True when paid from the customer's wallet (no Stripe touch on this tx). */
   walletUsed: boolean;
+  /** Gateway that processed the charge. Absent on legacy rows (= stripe). */
+  processor?: PricingProcessor;
 }

@@ -1,10 +1,11 @@
-import { admin, db } from "../../config/firebase";
+import { db } from "../../config/firebase";
 import { mailer } from "../../mailer_service";
 import {
   OTP_EXPIRES_MINUTES,
   OTP_MAX_ATTEMPTS,
   OTP_RATE_LIMIT_SECONDS,
 } from "./otp.constants";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -41,7 +42,7 @@ export async function requestOtp(rawEmail: string): Promise<
   const existing = await otpRef.get();
 
   if (existing.exists) {
-    const createdAt = (existing.data()?.createdAt as admin.firestore.Timestamp | undefined)?.toDate();
+    const createdAt = (existing.data()?.createdAt as Timestamp | undefined)?.toDate();
     if (createdAt) {
       const secondsElapsed = (Date.now() - createdAt.getTime()) / 1000;
       if (secondsElapsed < OTP_RATE_LIMIT_SECONDS) {
@@ -56,9 +57,9 @@ export async function requestOtp(rawEmail: string): Promise<
 
   await otpRef.set({
     code,
-    expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
+    expiresAt: Timestamp.fromDate(expiresAt),
     attempts: 0,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
   });
 
   const sent = await mailer.sendOtpMail(email, code, OTP_EXPIRES_MINUTES);
@@ -98,7 +99,7 @@ export async function checkOtp(
 
       const data = snap.data()!;
       const attempts: number = data.attempts ?? 0;
-      const expiresAt = (data.expiresAt as admin.firestore.Timestamp).toDate();
+      const expiresAt = (data.expiresAt as Timestamp).toDate();
 
       if (attempts >= OTP_MAX_ATTEMPTS) {
         tx.delete(otpRef);
@@ -111,7 +112,7 @@ export async function checkOtp(
       }
 
       if (data.code !== code) {
-        tx.update(otpRef, { attempts: admin.firestore.FieldValue.increment(1) });
+        tx.update(otpRef, { attempts: FieldValue.increment(1) });
         const remaining = OTP_MAX_ATTEMPTS - attempts - 1;
         throw Object.assign(new Error(`Incorrect code. ${remaining} attempt(s) remaining.`), { status: 400 });
       }
