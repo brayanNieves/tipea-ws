@@ -5,14 +5,21 @@ import { mailer } from "../../mailer_service";
 import { customerFeeRepo } from "../payments/customer-fee.repository";
 import { calculateCustomerFee } from "../payments/service-fee";
 import { pricingService } from "../pricing/pricing.service";
-import { cybersourceService } from "./cybersource.service";
+import { readTargetOrigins } from "../../config/cybersource";
+import { cybersourceService, decodeTransientToken } from "./cybersource.service";
 import { WalletSessionError, walletSessionRepo } from "./wallet-session.repository";
 import type {
   ChargeTipRequest,
   ChargeTipResponse,
+  ConsumerAuthentication,
   CreateSessionRequest,
   CreateSessionResponse,
   CybersourceWallet,
+  Enroll3dsRequest,
+  Enroll3dsResponse,
+  Setup3dsRequest,
+  Setup3dsResponse,
+  WalletSession,
 } from "./cybersource.types";
 import { FieldValue } from "firebase-admin/firestore";
 
@@ -29,6 +36,77 @@ async function reportError(context: string, error: unknown): Promise<void> {
 function userMessage(fallback: string, error: unknown): string {
   if (!IS_EMULATOR) return fallback;
   return `${fallback} [emulator: ${error instanceof Error ? error.message : String(error)}]`;
+}
+
+/** Maps a session-lookup failure to the callable error the FE expects. */
+function sessionError(error: unknown): never {
+  if (error instanceof WalletSessionError) {
+    switch (error.code) {
+      case "NOT_FOUND":
+        throw new HttpsError("not-found", "Sesión de pago no encontrada.");
+      case "FORBIDDEN":
+        throw new HttpsError("permission-denied", "La sesión de pago no te pertenece.");
+      case "USED":
+        throw new HttpsError("failed-precondition", "Esta sesión de pago ya fue usada.");
+      case "EXPIRED":
+        throw new HttpsError("deadline-exceeded", "La sesión de pago expiró.");
+    }
+  }
+  throw error;
+}
+
+/** The ACS posts the challenge result to this URL, so it must be one of ours. */
+function assertAllowedReturnUrl(returnUrl: string): void {
+  // localhost is the dev server, which may run over http; the browser is what
+  // posts to it, so it never leaves the machine.
+  const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(returnUrl);
+  const allowed = readTargetOrigins();
+  if (!isLocal && !allowed.some((origin) => returnUrl.startsWith(`${origin}/`))) {
+    throw new HttpsError("invalid-argument", "returnUrl no permitido.");
+  }
+}
+
+function clientIp(rawRequest: { headers: Record<string, unknown>; ip?: string } | undefined) {
+  const forwarded = rawRequest?.headers?.["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.length > 0) {
+    return forwarded.split(",")[0].trim();
+  }
+  return rawRequest?.ip ?? null;
+}
+
+/**
+ * Picks the authentication values, dropping the ones the issuer didn't send —
+ * Firestore rejects `undefined`, and Cybersource doesn't want empty fields.
+ */
+function readAuthentication(
+  result: { consumerAuthenticationInformation?: ConsumerAuthentication } | undefined
+): ConsumerAuthentication {
+  const info = result?.consumerAuthenticationInformation ?? {};
+  const fields: (keyof ConsumerAuthentication)[] = [
+    "cavv",
+    "eciRaw",
+    "xid",
+    "directoryServerTransactionId",
+    "paSpecificationVersion",
+    "authenticationTransactionId",
+    "indicator",
+  ];
+  const authentication: ConsumerAuthentication = {};
+  for (const field of fields) {
+    const value = info[field];
+    if (typeof value === "string" && value.length > 0) authentication[field] = value;
+  }
+  return authentication;
+}
+
+function payerAuthError(result: { errorInformation?: { reason?: string; message?: string }; message?: string; status?: string; httpStatus: number }): string {
+  return (
+    result.errorInformation?.reason ??
+    result.errorInformation?.message ??
+    result.message ??
+    result.status ??
+    `http ${result.httpStatus}`
+  );
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -125,6 +203,166 @@ export const createCybersourceSession = onCall(
 );
 
 // ─────────────────────────────────────────────────────────────
+// setupCybersource3ds
+// Decides whether this token needs EMV 3DS, per the VisaNet guide:
+//   - Apple Pay, or Google Pay CRYPTOGRAM_3DS → device cryptogram, skip 3DS.
+//   - Google Pay PAN_ONLY (card held in the Google account) → plain card,
+//     run Payer Authentication.
+//
+// Request:  { sessionId, transientToken }
+// Response: { mode: 'wallet' } | { mode: '3ds', accessToken, deviceDataCollectionUrl, referenceId }
+// ─────────────────────────────────────────────────────────────
+export const setupCybersource3ds = onCall(
+  { secrets: cybersourceSecrets },
+  async (request): Promise<Setup3dsResponse> => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión para realizar un pago.");
+    }
+    const { sessionId, transientToken } = (request.data ?? {}) as Setup3dsRequest;
+    if (!sessionId || !transientToken) {
+      throw new HttpsError("invalid-argument", "sessionId y transientToken son requeridos.");
+    }
+
+    let session: WalletSession;
+    try {
+      session = await walletSessionRepo.loadForAuth(sessionId, request.auth.uid);
+    } catch (error) {
+      sessionError(error);
+    }
+
+    const info = decodeTransientToken(transientToken, session.wallet);
+
+    if (info.skip3ds) {
+      await walletSessionRepo.patchAuth(sessionId, {
+        method: info.method,
+        googlePayMode: info.googlePayMode,
+        threeDs: "none",
+      });
+      console.log(
+        `✅ [setupCybersource3ds] session=${sessionId} | ${info.method}${info.googlePayMode ? `/${info.googlePayMode}` : ""} | sin 3DS`
+      );
+      return { mode: "wallet" };
+    }
+
+    const setup = await cybersourceService.authenticationSetup({
+      transientToken,
+      referenceCode: sessionId,
+    });
+    const referenceId = setup.consumerAuthenticationInformation?.referenceId;
+    const accessToken = setup.consumerAuthenticationInformation?.accessToken;
+    const deviceDataCollectionUrl =
+      setup.consumerAuthenticationInformation?.deviceDataCollectionUrl;
+
+    if (!referenceId || !accessToken || !deviceDataCollectionUrl) {
+      const reason = payerAuthError(setup);
+      console.error(`❌ [setupCybersource3ds] session=${sessionId} | ${reason}`);
+      await walletSessionRepo.markFailed(sessionId, `3ds-setup: ${reason}`, null);
+      await reportError(`setupCybersource3ds — session=${sessionId}`, new Error(reason));
+      throw new HttpsError(
+        "unavailable",
+        userMessage("No se pudo iniciar la verificación del pago.", new Error(reason))
+      );
+    }
+
+    await walletSessionRepo.patchAuth(sessionId, {
+      method: info.method,
+      googlePayMode: info.googlePayMode,
+      threeDs: "frictionless",
+      referenceId,
+    });
+
+    console.log(
+      `🔐 [setupCybersource3ds] session=${sessionId} | ${info.method}${info.googlePayMode ? `/${info.googlePayMode}` : ""} | 3DS requerido | to=${session.targetUserId}`
+    );
+    return { mode: "3ds", accessToken, deviceDataCollectionUrl, referenceId };
+  }
+);
+
+// ─────────────────────────────────────────────────────────────
+// enrollCybersource3ds
+// Enrollment check. Either the issuer authenticates without friction, or it
+// asks for a challenge that the customer completes in the step-up iframe.
+//
+// Request:  { sessionId, transientToken, returnUrl, browser }
+// Response: { status: 'ok' } | { status: 'challenge', stepUpUrl, accessToken, pareq }
+// ─────────────────────────────────────────────────────────────
+export const enrollCybersource3ds = onCall(
+  { secrets: cybersourceSecrets },
+  async (request): Promise<Enroll3dsResponse> => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Debes iniciar sesión para realizar un pago.");
+    }
+    const { sessionId, transientToken, returnUrl, browser } = (request.data ??
+      {}) as Enroll3dsRequest;
+    if (!sessionId || !transientToken || !returnUrl) {
+      throw new HttpsError(
+        "invalid-argument",
+        "sessionId, transientToken y returnUrl son requeridos."
+      );
+    }
+    assertAllowedReturnUrl(returnUrl);
+
+    let session: WalletSession;
+    try {
+      session = await walletSessionRepo.loadForAuth(sessionId, request.auth.uid);
+    } catch (error) {
+      sessionError(error);
+    }
+    if (!session.referenceId) {
+      throw new HttpsError("failed-precondition", "Falta el paso previo de verificación.");
+    }
+
+    const info = decodeTransientToken(transientToken, session.wallet);
+    const enrollment = await cybersourceService.checkEnrollment({
+      transientToken,
+      referenceCode: sessionId,
+      totalAmount: session.customerPays,
+      referenceId: session.referenceId,
+      returnUrl,
+      billTo: info.billTo,
+      ipAddress: clientIp(request.rawRequest as never),
+      browser: browser ?? {},
+    });
+
+    if (enrollment.status === "AUTHENTICATION_SUCCESSFUL") {
+      const authentication = readAuthentication(enrollment);
+      await walletSessionRepo.patchAuth(sessionId, {
+        threeDs: "frictionless",
+        authentication,
+        authenticationTransactionId: authentication.authenticationTransactionId ?? null,
+      });
+      console.log(`✅ [enrollCybersource3ds] session=${sessionId} | frictionless`);
+      return { status: "ok" };
+    }
+
+    if (enrollment.status === "PENDING_AUTHENTICATION") {
+      const info3ds = enrollment.consumerAuthenticationInformation ?? {};
+      if (!info3ds.stepUpUrl || !info3ds.accessToken) {
+        const reason = payerAuthError(enrollment);
+        await walletSessionRepo.markFailed(sessionId, `3ds-challenge: ${reason}`, null);
+        throw new HttpsError("unavailable", userMessage("No se pudo verificar el pago.", new Error(reason)));
+      }
+      await walletSessionRepo.patchAuth(sessionId, {
+        threeDs: "challenge",
+        authenticationTransactionId: info3ds.authenticationTransactionId ?? null,
+      });
+      console.log(`🔐 [enrollCybersource3ds] session=${sessionId} | challenge`);
+      return {
+        status: "challenge",
+        stepUpUrl: info3ds.stepUpUrl,
+        accessToken: info3ds.accessToken,
+        pareq: info3ds.pareq ?? "",
+      };
+    }
+
+    const reason = payerAuthError(enrollment);
+    console.warn(`⚠️ [enrollCybersource3ds] session=${sessionId} | ${reason}`);
+    await walletSessionRepo.markFailed(sessionId, `3ds-enrollment: ${reason}`, null);
+    throw new HttpsError("failed-precondition", "El banco no autorizó la verificación.");
+  }
+);
+
+// ─────────────────────────────────────────────────────────────
 // chargeCybersourceTip
 // Charges the transient token produced by Unified Checkout for a session
 // created by createCybersourceSession and, once AUTHORIZED, writes the /tips
@@ -151,27 +389,37 @@ export const chargeCybersourceTip = onCall(
       throw new HttpsError("invalid-argument", "transientToken es requerido.");
     }
 
-    let session;
+    let session: WalletSession;
     try {
       session = await walletSessionRepo.claimForCharge(sessionId, uid);
     } catch (error) {
-      if (error instanceof WalletSessionError) {
-        switch (error.code) {
-          case "NOT_FOUND":
-            throw new HttpsError("not-found", "Sesión de pago no encontrada.");
-          case "FORBIDDEN":
-            throw new HttpsError("permission-denied", "La sesión de pago no te pertenece.");
-          case "USED":
-            throw new HttpsError("failed-precondition", "Esta sesión de pago ya fue usada.");
-          case "EXPIRED":
-            throw new HttpsError("deadline-exceeded", "La sesión de pago expiró.");
-        }
-      }
-      throw error;
+      sessionError(error);
     }
 
     const wallet: CybersourceWallet = session.wallet;
     const logCtx = `session=${sessionId} | from=${uid} | to=${session.targetUserId} | ${wallet} | RD$${session.customerPays}`;
+
+    // After a challenge the final authentication values only exist once the
+    // results call is made; a frictionless check already stored them.
+    let authentication = session.authentication ?? null;
+    if (session.threeDs === "challenge" && !authentication) {
+      if (!session.authenticationTransactionId) {
+        throw new HttpsError("failed-precondition", "Falta completar la verificación del banco.");
+      }
+      const results = await cybersourceService.validateAuthenticationResults({
+        transientToken,
+        referenceCode: sessionId,
+        totalAmount: session.customerPays,
+        authenticationTransactionId: session.authenticationTransactionId,
+      });
+      authentication = readAuthentication(results);
+      if (!authentication.cavv && !authentication.authenticationTransactionId) {
+        const reason = payerAuthError(results);
+        console.warn(`⚠️ [chargeCybersourceTip] 3ds-results | ${logCtx} | ${reason}`);
+        await walletSessionRepo.markFailed(sessionId, `3ds-results: ${reason}`, null);
+        throw new HttpsError("failed-precondition", "No se pudo verificar el pago con el banco.");
+      }
+    }
 
     let payment;
     try {
@@ -181,6 +429,8 @@ export const chargeCybersourceTip = onCall(
         referenceCode: sessionId,
         targetUserId: session.targetUserId,
         senderUid: uid,
+        wallet,
+        authentication,
       });
     } catch (error) {
       // Network error: we don't know whether Cybersource charged. Leave the
@@ -229,6 +479,9 @@ export const chargeCybersourceTip = onCall(
         stripePaymentIntentId: null,
         paymentProcessor: "cybersource",
         cybersourcePaymentId: paymentId,
+        authMethod: session.method ?? null,
+        googlePayMode: session.googlePayMode ?? null,
+        threeDS: session.threeDs ?? "none",
         paymentMethod: wallet,
         pricing: session.pricing,
         songRequest: songRequest && typeof songRequest === "object" ? songRequest : null,
@@ -240,6 +493,7 @@ export const chargeCybersourceTip = onCall(
         status: "paid",
         paymentId,
         tipId: tipRef.id,
+        ...(authentication ? { authentication } : {}),
       });
       await batch.commit();
     } catch (error) {

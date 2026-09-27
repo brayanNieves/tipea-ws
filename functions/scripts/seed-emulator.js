@@ -25,5 +25,15 @@ const STAFF_NAME = process.argv[3] || "Staff Local";
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
   await db.doc("config/customerFee").set({ percentageFee: 8, fixedFee: 5 });
+
+  // onTipCreated reads the staff plan; without these the tip ends in "error".
+  const plans = [
+    { id: "plan_starter", name: "Starter", commissionPct: 0, monthlyFee: 0, maxTipsPerMonth: -1 },
+    { id: "plan_pro", name: "Pro", commissionPct: 0, monthlyFee: 1500, maxTipsPerMonth: -1 },
+    { id: "plan_business", name: "Business", commissionPct: 0, monthlyFee: 3500, maxTipsPerMonth: -1 },
+  ];
+  for (const { id, ...plan } of plans) {
+    await db.doc(`plans/${id}`).set({ ...plan, features: [] });
+  }
   console.log(`Seeded. Open http://localhost:3000/tip/${STAFF_ID}`);
 })();

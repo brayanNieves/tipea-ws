@@ -33,6 +33,8 @@ export { createPaymentIntent } from "./modules/payments/payment.controller";
 // Payments (Cybersource — Apple Pay / Google Pay for the Dominican Republic)
 export {
   createCybersourceSession,
+  setupCybersource3ds,
+  enrollCybersource3ds,
   chargeCybersourceTip,
 } from "./modules/cybersource/cybersource.controller";
 

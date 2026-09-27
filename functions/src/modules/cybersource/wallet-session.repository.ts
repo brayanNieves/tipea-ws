@@ -1,5 +1,5 @@
 import { db } from "../../config/firebase";
-import type { WalletSession } from "./cybersource.types";
+import type { WalletSession, WalletSessionStatus } from "./cybersource.types";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
 const COLLECTION = "cybersourceSessions";
@@ -37,8 +37,38 @@ export const walletSessionRepo = {
   },
 
   /**
-   * Atomically moves a session from `created` to `charging`. This is what
-   * makes charging idempotent: a second call with the same session fails.
+   * Loads a session for the Payer Authentication steps, which run between
+   * `created` and the charge. Unlike `claimForCharge` it does not lock it.
+   */
+  async loadForAuth(sessionId: string, uid: string): Promise<WalletSession> {
+    const snap = await this.ref(sessionId).get();
+    if (!snap.exists) throw new WalletSessionError("NOT_FOUND");
+    const session = snap.data() as WalletSession;
+    if (session.uid !== uid) throw new WalletSessionError("FORBIDDEN");
+    if (session.status !== "created" && session.status !== "authenticating") {
+      throw new WalletSessionError("USED");
+    }
+    if (session.expiresAt.toMillis() < Date.now()) throw new WalletSessionError("EXPIRED");
+    return session;
+  },
+
+  /**
+   * Records what the 3DS steps learned about the token / authentication.
+   * Undefined values are dropped: Firestore rejects them outright.
+   */
+  async patchAuth(sessionId: string, patch: Partial<WalletSession>) {
+    const clean = Object.fromEntries(
+      Object.entries(patch).filter(([, value]) => value !== undefined)
+    );
+    await this.ref(sessionId).update({
+      status: "authenticating" as WalletSessionStatus,
+      ...clean,
+    });
+  },
+
+  /**
+   * Atomically moves a session to `charging`. This is what makes charging
+   * idempotent: a second call with the same session fails.
    */
   async claimForCharge(sessionId: string, uid: string): Promise<WalletSession> {
     const ref = this.ref(sessionId);
@@ -47,7 +77,9 @@ export const walletSessionRepo = {
       if (!snap.exists) throw new WalletSessionError("NOT_FOUND");
       const session = snap.data() as WalletSession;
       if (session.uid !== uid) throw new WalletSessionError("FORBIDDEN");
-      if (session.status !== "created") throw new WalletSessionError("USED");
+      if (session.status !== "created" && session.status !== "authenticating") {
+        throw new WalletSessionError("USED");
+      }
       if (session.expiresAt.toMillis() < Date.now()) throw new WalletSessionError("EXPIRED");
       tx.update(ref, { status: "charging" });
       return session;
