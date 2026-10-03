@@ -22,6 +22,18 @@ const PAYMENT_TYPE: Record<CybersourceWallet, string> = {
   google_pay: "GOOGLEPAY",
 };
 
+/**
+ * The merchant doesn't have this wallet enabled (or the domain isn't registered
+ * for Apple Pay). Expected condition, not a system failure: the page hides the
+ * wallet instead of alerting.
+ */
+export class WalletNotAvailableError extends Error {
+  constructor(public readonly wallet: CybersourceWallet, message: string) {
+    super(message);
+    this.name = "WalletNotAvailableError";
+  }
+}
+
 /** Cybersource paymentSolution per wallet. */
 const PAYMENT_SOLUTION: Record<CybersourceWallet, string> = {
   apple_pay: "001",
@@ -152,7 +164,16 @@ export const cybersourceService = {
 
     const res = await cybersourcePost<unknown>(creds, "/up/v1/capture-contexts", payload);
     if (res.status !== 201 && res.status !== 200) {
-      throw new Error(`capture-context http ${res.status}: ${JSON.stringify(res.data)}`);
+      const body = JSON.stringify(res.data);
+      // "None of the requested payment types are enabled and available" —
+      // the wallet is off for this merchant, nothing to retry.
+      const details = (res.data as { details?: { location?: string }[] })?.details ?? [];
+      const notEnabled =
+        res.status === 400 && details.some((d) => d?.location === "/allowedPaymentTypes");
+      if (notEnabled) {
+        throw new WalletNotAvailableError(wallet, body);
+      }
+      throw new Error(`capture-context http ${res.status}: ${body}`);
     }
     if (typeof res.data !== "string" || !res.data) {
       throw new Error("capture-context: unexpected response shape");

@@ -6,7 +6,11 @@ import { customerFeeRepo } from "../payments/customer-fee.repository";
 import { calculateCustomerFee } from "../payments/service-fee";
 import { pricingService } from "../pricing/pricing.service";
 import { readTargetOrigins } from "../../config/cybersource";
-import { cybersourceService, decodeTransientToken } from "./cybersource.service";
+import {
+  WalletNotAvailableError,
+  cybersourceService,
+  decodeTransientToken,
+} from "./cybersource.service";
 import { WalletSessionError, walletSessionRepo } from "./wallet-session.repository";
 import type {
   ChargeTipRequest,
@@ -189,6 +193,14 @@ export const createCybersourceSession = onCall(
         customerPays: fee.customerPays,
       };
     } catch (error) {
+      if (error instanceof WalletNotAvailableError) {
+        // Not a failure: the merchant doesn't have this wallet enabled. The page
+        // hides the wallet button and leaves the card option.
+        console.warn(
+          `⚠️ [createCybersourceSession] ${wallet} no disponible para el merchant | to=${targetUserId} | ${error.message}`
+        );
+        throw new HttpsError("failed-precondition", "wallet-unavailable");
+      }
       console.error("❌ [createCybersourceSession]", error);
       await reportError(
         `createCybersourceSession — from=${request.auth.uid} | to=${targetUserId} | ${wallet}`,
