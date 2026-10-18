@@ -6,7 +6,7 @@ import { recordEmailVerification, resolveCanonUid } from "./email-link";
 import { checkOtp, isValidEmail, normalizeEmail, requestOtp } from "../auth/otp.service";
 import { pricingService } from "../pricing/pricing.service";
 import { customerFeeRepo } from "../payments/customer-fee.repository";
-import { calculateCustomerFee } from "../payments/service-fee";
+import { calculateCustomerFee, MIN_TIP_DOP } from "../payments/service-fee";
 import { FieldValue } from "firebase-admin/firestore";
 
 const MIN_WALLET_TOPUP_DOP = 200;
@@ -320,6 +320,9 @@ export const tipFromWallet = onCall(async (request) => {
   if (!staffId) throw new HttpsError("invalid-argument", "staffId is required.");
   if (typeof amount !== "number" || amount <= 0) {
     throw new HttpsError("invalid-argument", "amount must be greater than zero.");
+  }
+  if (amount < MIN_TIP_DOP) {
+    throw new HttpsError("invalid-argument", `La propina mínima es RD$ ${MIN_TIP_DOP}.`);
   }
   if (!email) throw new HttpsError("invalid-argument", "email is required.");
 

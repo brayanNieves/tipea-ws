@@ -3,7 +3,7 @@ import { db } from "../../config/firebase";
 import { cybersourceSecrets } from "../../config/cybersource";
 import { mailer } from "../../mailer_service";
 import { customerFeeRepo } from "../payments/customer-fee.repository";
-import { calculateCustomerFee } from "../payments/service-fee";
+import { calculateCustomerFee, MIN_TIP_DOP } from "../payments/service-fee";
 import { pricingService } from "../pricing/pricing.service";
 import { readTargetOrigins } from "../../config/cybersource";
 import {
@@ -141,6 +141,9 @@ export const createCybersourceSession = onCall(
 
     if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
       throw new HttpsError("invalid-argument", "El monto debe ser un número mayor a cero.");
+    }
+    if (amount < MIN_TIP_DOP) {
+      throw new HttpsError("invalid-argument", `La propina mínima es RD$ ${MIN_TIP_DOP}.`);
     }
     if (!targetUserId) {
       throw new HttpsError("invalid-argument", "targetUserId es requerido.");
