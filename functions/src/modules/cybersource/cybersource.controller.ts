@@ -21,6 +21,7 @@ import type {
   CybersourceWallet,
   Enroll3dsRequest,
   Enroll3dsResponse,
+  PayerAuthResult,
   Setup3dsRequest,
   Setup3dsResponse,
   WalletSession,
@@ -103,14 +104,18 @@ function readAuthentication(
   return authentication;
 }
 
-function payerAuthError(result: { errorInformation?: { reason?: string; message?: string }; message?: string; status?: string; httpStatus: number }): string {
-  return (
+function payerAuthError(result: PayerAuthResult & { httpStatus: number }): string {
+  const reason =
     result.errorInformation?.reason ??
     result.errorInformation?.message ??
     result.message ??
     result.status ??
-    `http ${result.httpStatus}`
-  );
+    `http ${result.httpStatus}`;
+  // Without the field list, "invalid data" doesn't say what to fix.
+  const details = [...(result.errorInformation?.details ?? []), ...(result.details ?? [])]
+    .map((d) => [d.field, d.reason].filter(Boolean).join(":"))
+    .filter(Boolean);
+  return details.length > 0 ? `${reason} [${details.join(", ")}]` : reason;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -368,7 +373,9 @@ export const enrollCybersource3ds = onCall(
     }
 
     const reason = payerAuthError(enrollment);
-    console.warn(`⚠️ [enrollCybersource3ds] session=${sessionId} | ${reason}`);
+    console.warn(
+      `⚠️ [enrollCybersource3ds] session=${sessionId} | ${reason} | billTo=${Object.keys(info.billTo ?? {}).join(",") || "none"}`
+    );
     await walletSessionRepo.markFailed(sessionId, `3ds-enrollment: ${reason}`, null);
     throw new HttpsError("failed-precondition", "El banco no autorizó la verificación.");
   }
