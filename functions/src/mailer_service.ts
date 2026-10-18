@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import { buildTipStaffEmail, buildTipAdminEmail, TipEmailData } from "./build-tip-email";
+import { buildPayoutEmail, PayoutEmailData } from "./build-payout-email";
 import { buildErrorEmail } from "./build-error-email";
 import { buildOtpEmail } from "./build-otp-email";
 
@@ -32,13 +33,12 @@ export class Mailer {
     }
 
     // ─── Tip emails ───────────────────────────────────────────────────────────
-
     public async sendTipStaffEmail(data: TipEmailData): Promise<boolean> {
         console.log(`📧 [Mailer] Sending tip email to staff → ${data.staffName} (${data.staffEmail}) | amount: RD$ ${data.amount} | net: RD$ ${data.netAmount}`);
         return this.sendMail(
             data.staffEmail,
-            `💰 You received RD$ ${data.amount.toLocaleString("en-US")} tip!`,
-            `Hey ${data.staffName}, you received a RD$ ${data.amount} tip. Your earnings: RD$ ${data.netAmount}.`,
+            `💰 ¡Recibiste RD$ ${data.amount.toLocaleString("es-DO")} de propina!`,
+            `Hola ${data.staffName}, recibiste una propina de RD$ ${data.amount}. Tus ganancias: RD$ ${data.netAmount}.`,
             buildTipStaffEmail(data)
         );
     }
@@ -48,8 +48,8 @@ export class Mailer {
         console.log(`📧 [Mailer] Sending commission email to admin → ${adminEmail} | staff: ${data.staffName} | commission: RD$ ${data.commissionAmt} (${data.commissionPct}%)`);
         return this.sendMail(
             adminEmail,
-            `💵 Commission: RD$ ${data.commissionAmt.toLocaleString("en-US")} from ${data.staffName}`,
-            `Commission earned: RD$ ${data.commissionAmt} (${data.commissionPct}%) from ${data.staffName}'s tip.`,
+            `💵 Comisión: RD$ ${data.commissionAmt.toLocaleString("es-DO")} de ${data.staffName}`,
+            `Comisión generada: RD$ ${data.commissionAmt} (${data.commissionPct}%) por la propina de ${data.staffName}.`,
             buildTipAdminEmail(data)
         );
     }
@@ -62,6 +62,18 @@ export class Mailer {
             this.sendTipAdminEmail(data),
         ]);
         console.log(`📨 [Mailer] sendTipEmails done | staff: ${staff ? "✅" : "❌"} | admin: ${admin ? "✅" : "❌"}`);
+    }
+
+    // ─── Payout email ─────────────────────────────────────────────────────────
+
+    public async sendPayoutEmail(data: PayoutEmailData): Promise<boolean> {
+        console.log(`📧 [Mailer] Sending payout email → ${data.staffName} (${data.staffEmail}) | net: RD$ ${data.netToUser} | tips: ${data.tipCount}`);
+        return this.sendMail(
+            data.staffEmail,
+            `🏦 ¡Tu pago de RD$ ${data.netToUser.toLocaleString("es-DO")} ha sido enviado!`,
+            `Hola ${data.staffName}, tu pago de RD$ ${data.netToUser} por ${data.tipCount} ${data.tipCount === 1 ? "propina" : "propinas"} ha sido procesado vía ${data.method === "transfer" ? "transferencia bancaria" : "efectivo"}.`,
+            buildPayoutEmail(data)
+        );
     }
 
     // ─── OTP email ────────────────────────────────────────────────────────────
