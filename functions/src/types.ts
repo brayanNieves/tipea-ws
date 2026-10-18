@@ -3,7 +3,7 @@ import { Timestamp } from "firebase-admin/firestore";
 // ─────────────────────────────────────────────────────────────
 // USERS
 // ─────────────────────────────────────────────────────────────
-export type UserRole = "dj" | "waiter" | "vallet" | "bartender" | "other";
+export type UserRole = "dj" | "waiter" | "vallet" | "bartender" | "packer" | "car_washer" | "barber" | "other";
 
 export interface BankAccount {
   bankName: string;

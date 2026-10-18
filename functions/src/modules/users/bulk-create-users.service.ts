@@ -8,7 +8,16 @@ import type {
 import type { UserRole } from "./user.types";
 import { FieldValue } from "firebase-admin/firestore";
 
-const VALID_ROLES: UserRole[] = ["dj", "waiter", "vallet", "bartender", "other"];
+const VALID_ROLES: UserRole[] = [
+  "dj",
+  "waiter",
+  "vallet",
+  "bartender",
+  "packer",
+  "car_washer",
+  "barber",
+  "other",
+];
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD_LENGTH = 6; // Firebase Auth's minimum
 const MAX_BATCH_SIZE = 100;
