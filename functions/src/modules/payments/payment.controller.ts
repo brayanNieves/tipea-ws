@@ -5,7 +5,7 @@ import { mailer } from "../../mailer_service";
 import { getUsdToDopRate } from "./exchange-rate.service";
 import { paymentConfigRepo } from "./payment-config.repository";
 import { customerFeeRepo } from "./customer-fee.repository";
-import { calculateCustomerFee } from "./service-fee";
+import { calculateCustomerFee, MIN_TIP_DOP } from "./service-fee";
 import { pricingService } from "../pricing/pricing.service";
 import type { PricingPaymentMethod } from "../pricing/pricing.types";
 
@@ -59,6 +59,9 @@ export const createPaymentIntent = onCall(
 
     if (!amount || typeof amount !== "number" || amount <= 0) {
       throw new HttpsError("invalid-argument", "El monto debe ser un número mayor a cero.");
+    }
+    if (amount < MIN_TIP_DOP) {
+      throw new HttpsError("invalid-argument", `La propina mínima es RD$ ${MIN_TIP_DOP}.`);
     }
 
     if (!targetUserId) {

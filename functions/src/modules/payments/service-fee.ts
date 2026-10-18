@@ -31,6 +31,9 @@ export interface CustomerFeeBreakdown {
   customerPays: number;
 }
 
+/** Smallest tip a customer can send, in DOP (what staff receive, fee excluded). */
+export const MIN_TIP_DOP = 100;
+
 /** Used when /config/customerFee doesn't exist yet. */
 export const DEFAULT_CUSTOMER_FEE: CustomerFeeConfig = {
   percentageFee: 8,
