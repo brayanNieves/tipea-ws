@@ -136,7 +136,14 @@ export interface PayerAuthResult {
     stepUpUrl?: string;
     pareq?: string;
   };
-  errorInformation?: { reason?: string; message?: string };
+  errorInformation?: { reason?: string; message?: string; details?: ErrorDetail[] };
   message?: string;
+  reason?: string;
+  /** On INVALID_REQUEST: which fields Cybersource rejected. */
+  details?: ErrorDetail[];
+}
+
+export interface ErrorDetail {
+  field?: string;
   reason?: string;
 }

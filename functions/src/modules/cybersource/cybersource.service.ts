@@ -124,9 +124,39 @@ export function decodeTransientToken(
     );
   }
 
-  const billTo = claims?.data?.orderInformation?.billTo ?? claims?.content?.orderInformation?.billTo ?? null;
+  const billTo = sanitizeBillTo(
+    claims?.data?.orderInformation?.billTo ?? claims?.content?.orderInformation?.billTo
+  );
 
   return { method, googlePayMode, skip3ds, billTo };
+}
+
+const BILL_TO_FIELDS = [
+  "firstName",
+  "lastName",
+  "address1",
+  "address2",
+  "locality",
+  "administrativeArea",
+  "postalCode",
+  "country",
+  "email",
+  "phoneNumber",
+] as const;
+
+/**
+ * The token claims wrap each billing field as `{ value }`. Sent as-is to Payer
+ * Authentication, Cybersource rejects the request with "One or more fields in
+ * the request contains invalid data", so unwrap them and keep plain strings only.
+ */
+function sanitizeBillTo(raw: unknown): Record<string, string> | null {
+  if (!raw || typeof raw !== "object") return null;
+  const billTo: Record<string, string> = {};
+  for (const field of BILL_TO_FIELDS) {
+    const value = readValue((raw as Record<string, unknown>)[field])?.trim();
+    if (value) billTo[field] = value;
+  }
+  return Object.keys(billTo).length > 0 ? billTo : null;
 }
 
 export const cybersourceService = {
