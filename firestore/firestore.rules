@@ -30,7 +30,8 @@ service cloud.firestore {
     // Any authenticated user can create a tip (QR scan)
     // Read allowed for the recipient (staff) OR the sender (customer who
     //   created it — needed for the song-request status listener).
-    // Updates/deletes only via Cloud Functions.
+    // Updates/deletes only via Cloud Functions, except admins flagging
+    //   suspicionReviewed from the backoffice.
     // Clients MUST NOT set paidFromBalance: true — that path is callable-only
     // (tipFromBalance), which writes via the admin SDK and bypasses these rules.
     match /tips/{tipId} {
@@ -41,7 +42,11 @@ service cloud.firestore {
       );
       allow create: if request.auth != null
         && request.resource.data.get('paidFromBalance', false) == false;
-      allow update, delete: if false;
+      // Admins can only flag a suspicious tip as reviewed — no other field.
+      allow update: if request.auth != null
+        && request.auth.token.admin == true
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['suspicionReviewed']);
+      allow delete: if false;
     }
 
     // ── payouts ────────────────────────────────────────────
