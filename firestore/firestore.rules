@@ -120,14 +120,10 @@ service cloud.firestore {
       allow write: if request.auth != null && request.auth.token.admin == true;
     }
 
-    // ── wallet_sessions / payment_logs ─────────────────────
-    // One doc per Cybersource payment attempt, and one log per gateway call
-    // (sanitized responses). Written only by Cloud Functions; the backoffice
+    // ── payment_logs ───────────────────────────────────────
+    // One log per Cybersource gateway call (sanitized responses), keyed by the
+    // cybersourceSessions id. Written only by Cloud Functions; the backoffice
     // transaction log reads them.
-    match /wallet_sessions/{sessionId} {
-      allow read: if request.auth != null && request.auth.token.admin == true;
-      allow write: if false;
-    }
     match /payment_logs/{logId} {
       allow read: if request.auth != null && request.auth.token.admin == true;
       allow write: if false;
@@ -171,9 +167,11 @@ service cloud.firestore {
     }
 
     // ── cybersourceSessions ────────────────────────────────
-    // Apple Pay / Google Pay sessions (Cybersource). Functions only.
+    // Apple Pay / Google Pay sessions (Cybersource), one per payment attempt.
+    // Written only by Cloud Functions; admins read them in the transaction log.
     match /cybersourceSessions/{sessionId} {
-      allow read, write: if false;
+      allow read: if request.auth != null && request.auth.token.admin == true;
+      allow write: if false;
     }
 
     // ── tippers ──────────────────────────────────────────
