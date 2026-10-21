@@ -121,10 +121,11 @@ service cloud.firestore {
     }
 
     // ── companies ──────────────────────────────────────────
-    // Businesses staff belong to; the transaction log shows their names.
+    // Businesses staff belong to (users.companyId). The public tip page reads
+    // the business's minTip / suggestedTips (anonymous auth); no PII here.
     match /companies/{companyId} {
-      allow read: if request.auth != null && request.auth.token.admin == true;
-      allow write: if false;
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.token.admin == true;
     }
 
     // ── payment_logs ───────────────────────────────────────

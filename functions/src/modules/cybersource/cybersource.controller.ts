@@ -1,9 +1,10 @@
+import { assertMinTip } from "../payments/tip-rules";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { db } from "../../config/firebase";
 import { cybersourceSecrets } from "../../config/cybersource";
 import { mailer } from "../../mailer_service";
 import { customerFeeRepo } from "../payments/customer-fee.repository";
-import { calculateCustomerFee, MIN_TIP_DOP } from "../payments/service-fee";
+import { calculateCustomerFee } from "../payments/service-fee";
 import { pricingService } from "../pricing/pricing.service";
 import { readTargetOrigins } from "../../config/cybersource";
 import {
@@ -156,9 +157,6 @@ export const createCybersourceSession = onCall(
     if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
       throw new HttpsError("invalid-argument", "El monto debe ser un número mayor a cero.");
     }
-    if (amount < MIN_TIP_DOP) {
-      throw new HttpsError("invalid-argument", `La propina mínima es RD$ ${MIN_TIP_DOP}.`);
-    }
     if (!targetUserId) {
       throw new HttpsError("invalid-argument", "targetUserId es requerido.");
     }
@@ -170,6 +168,7 @@ export const createCybersourceSession = onCall(
     if (!targetUserSnap.exists || targetUserSnap.get("active") === false) {
       throw new HttpsError("not-found", `Usuario ${targetUserId} no encontrado.`);
     }
+    await assertMinTip(amount, targetUserSnap);
 
     const feeConfig = await customerFeeRepo.read();
     const fee = calculateCustomerFee(amount, feeConfig.percentageFee, feeConfig.fixedFee);

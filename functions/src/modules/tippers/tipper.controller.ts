@@ -1,3 +1,4 @@
+import { assertMinTip } from "../payments/tip-rules";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { db } from "../../config/firebase";
 import { buildStripeClient, stripeSecretKey } from "../../config/stripe";
@@ -6,7 +7,7 @@ import { recordEmailVerification, resolveCanonUid } from "./email-link";
 import { checkOtp, isValidEmail, normalizeEmail, requestOtp } from "../auth/otp.service";
 import { pricingService } from "../pricing/pricing.service";
 import { customerFeeRepo } from "../payments/customer-fee.repository";
-import { calculateCustomerFee, MIN_TIP_DOP } from "../payments/service-fee";
+import { calculateCustomerFee } from "../payments/service-fee";
 import { FieldValue } from "firebase-admin/firestore";
 
 const MIN_WALLET_TOPUP_DOP = 200;
@@ -321,9 +322,6 @@ export const tipFromWallet = onCall(async (request) => {
   if (typeof amount !== "number" || amount <= 0) {
     throw new HttpsError("invalid-argument", "amount must be greater than zero.");
   }
-  if (amount < MIN_TIP_DOP) {
-    throw new HttpsError("invalid-argument", `La propina mínima es RD$ ${MIN_TIP_DOP}.`);
-  }
   if (!email) throw new HttpsError("invalid-argument", "email is required.");
 
   const canonUid = await requireVerifiedEmail(request.auth.uid, email);
@@ -333,6 +331,7 @@ export const tipFromWallet = onCall(async (request) => {
   if (!staffSnap.exists) {
     throw new HttpsError("not-found", `Staff ${staffId} not found.`);
   }
+  await assertMinTip(amount, staffSnap);
 
   // The fee is charged to the CUSTOMER: tip + fee are debited from the
   // wallet and staff receive the full tip. Recomputed here, server-side.
