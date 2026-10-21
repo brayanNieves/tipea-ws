@@ -14,6 +14,7 @@ import {
   readProcessorTrace,
 } from "./cybersource.service";
 import { WalletSessionError, walletSessionRepo } from "./wallet-session.repository";
+import { logGatewayCall } from "./payment-log.repository";
 import type {
   ChargeTipRequest,
   ChargeTipResponse,
@@ -179,6 +180,16 @@ export const createCybersourceSession = onCall(
         fee.customerPays,
         wallet
       );
+      logGatewayCall({
+        sessionId: sessionRef.id,
+        step: "capture_context",
+        httpStatus: 201,
+        response: null,
+        uid: request.auth.uid,
+        targetUserId,
+        wallet,
+        amount: fee.customerPays,
+      });
 
       await walletSessionRepo.create(sessionRef, {
         uid: request.auth.uid,
@@ -203,6 +214,17 @@ export const createCybersourceSession = onCall(
         customerPays: fee.customerPays,
       };
     } catch (error) {
+      logGatewayCall({
+        sessionId: sessionRef.id,
+        step: "capture_context",
+        httpStatus: null,
+        response: null,
+        error: error instanceof Error ? error.message : String(error),
+        uid: request.auth.uid,
+        targetUserId,
+        wallet,
+        amount: fee.customerPays,
+      });
       if (error instanceof WalletNotAvailableError) {
         // Not a failure: the merchant doesn't have this wallet enabled. The page
         // hides the wallet button and leaves the card option.
@@ -269,6 +291,16 @@ export const setupCybersource3ds = onCall(
     const setup = await cybersourceService.authenticationSetup({
       transientToken,
       referenceCode: sessionId,
+    });
+    logGatewayCall({
+      sessionId,
+      step: "3ds_setup",
+      httpStatus: setup.httpStatus,
+      response: setup,
+      uid: session.uid,
+      targetUserId: session.targetUserId,
+      wallet: session.wallet,
+      amount: session.customerPays,
     });
     const referenceId = setup.consumerAuthenticationInformation?.referenceId;
     const accessToken = setup.consumerAuthenticationInformation?.accessToken;
@@ -344,6 +376,16 @@ export const enrollCybersource3ds = onCall(
       billTo: info.billTo,
       ipAddress: clientIp(request.rawRequest as never),
       browser: browser ?? {},
+    });
+    logGatewayCall({
+      sessionId,
+      step: "3ds_enroll",
+      httpStatus: enrollment.httpStatus,
+      response: enrollment,
+      uid: session.uid,
+      targetUserId: session.targetUserId,
+      wallet: session.wallet,
+      amount: session.customerPays,
     });
 
     if (enrollment.status === "AUTHENTICATION_SUCCESSFUL") {
@@ -436,6 +478,16 @@ export const chargeCybersourceTip = onCall(
         totalAmount: session.customerPays,
         authenticationTransactionId: session.authenticationTransactionId,
       });
+      logGatewayCall({
+        sessionId,
+        step: "3ds_results",
+        httpStatus: results.httpStatus,
+        response: results,
+        uid,
+        targetUserId: session.targetUserId,
+        wallet,
+        amount: session.customerPays,
+      });
       authentication = readAuthentication(results);
       if (!authentication.cavv && !authentication.authenticationTransactionId) {
         const reason = payerAuthError(results);
@@ -459,6 +511,17 @@ export const chargeCybersourceTip = onCall(
     } catch (error) {
       // Network error: we don't know whether Cybersource charged. Leave the
       // session in `charging` for manual reconciliation.
+      logGatewayCall({
+        sessionId,
+        step: "charge",
+        httpStatus: null,
+        response: null,
+        error: error instanceof Error ? error.message : String(error),
+        uid,
+        targetUserId: session.targetUserId,
+        wallet,
+        amount: session.customerPays,
+      });
       console.error(`❌ [chargeCybersourceTip] ${logCtx}`, error);
       await reportError(`chargeCybersourceTip (network) — ${logCtx}`, error);
       throw new HttpsError(
@@ -466,6 +529,17 @@ export const chargeCybersourceTip = onCall(
         userMessage("No se pudo procesar el pago. Intenta nuevamente.", error)
       );
     }
+
+    logGatewayCall({
+      sessionId,
+      step: "charge",
+      httpStatus: payment.httpStatus,
+      response: payment,
+      uid,
+      targetUserId: session.targetUserId,
+      wallet,
+      amount: session.customerPays,
+    });
 
     if (payment.status !== "AUTHORIZED") {
       const reason =
