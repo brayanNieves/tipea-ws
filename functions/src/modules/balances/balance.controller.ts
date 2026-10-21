@@ -1,10 +1,11 @@
+import { assertMinTip } from "../payments/tip-rules";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { db } from "../../config/firebase";
 import { buildStripeClient, stripeSecretKey } from "../../config/stripe";
 import { customerIdFromPhone, isValidDoPhone, normalizePhone } from "../../shared/utils/customer-id";
 import { balanceRepo } from "./balance.repository";
 import { customerFeeRepo } from "../payments/customer-fee.repository";
-import { calculateCustomerFee, MIN_TIP_DOP } from "../payments/service-fee";
+import { calculateCustomerFee } from "../payments/service-fee";
 import { FieldValue } from "firebase-admin/firestore";
 
 const MIN_TOPUP_DOP = 200;
@@ -214,9 +215,6 @@ export const tipFromBalance = onCall(async (request) => {
   if (typeof amount !== "number" || amount <= 0) {
     throw new HttpsError("invalid-argument", "amount debe ser mayor a cero.");
   }
-  if (amount < MIN_TIP_DOP) {
-    throw new HttpsError("invalid-argument", `La propina mínima es RD$ ${MIN_TIP_DOP}.`);
-  }
   const normalized = normalizePhone(phone);
   if (!isValidDoPhone(normalized)) {
     throw new HttpsError("invalid-argument", "Número de teléfono inválido.");
@@ -228,6 +226,7 @@ export const tipFromBalance = onCall(async (request) => {
   if (!staffSnap.exists) {
     throw new HttpsError("not-found", `Empleado ${staffId} no encontrado.`);
   }
+  await assertMinTip(amount, staffSnap);
 
   // The fee is charged to the CUSTOMER: tip + fee are debited from the
   // balance and staff receive the full tip.

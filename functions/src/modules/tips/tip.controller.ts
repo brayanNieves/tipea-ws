@@ -1,8 +1,8 @@
+import { assertMinTip } from "../payments/tip-rules";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { db } from "../../config/firebase";
 import { mailer } from "../../mailer_service";
 import { FieldValue } from "firebase-admin/firestore";
-import { MIN_TIP_DOP } from "../payments/service-fee";
 
 // ─────────────────────────────────────────────────────────────
 // createTip (HTTP Callable API)
@@ -25,14 +25,12 @@ export const createTip = onCall(async (request) => {
     if (amount <= 0) {
       throw new HttpsError("invalid-argument", "Amount must be greater than zero.");
     }
-    if (amount < MIN_TIP_DOP) {
-      throw new HttpsError("invalid-argument", `La propina mínima es RD$ ${MIN_TIP_DOP}.`);
-    }
 
     const targetUserSnap = await db.doc(`users/${targetUserId}`).get();
     if (!targetUserSnap.exists) {
       throw new HttpsError("not-found", `User ${targetUserId} not found.`);
     }
+    await assertMinTip(amount, targetUserSnap);
 
     const tipRef = await db.collection("tips").add({
       userId: targetUserId,
