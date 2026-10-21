@@ -25,6 +25,7 @@ import type {
   Enroll3dsRequest,
   Enroll3dsResponse,
   PayerAuthResult,
+  SessionDevice,
   Setup3dsRequest,
   Setup3dsResponse,
   WalletSession,
@@ -72,6 +73,16 @@ function assertAllowedReturnUrl(returnUrl: string): void {
   if (!isLocal && !allowed.some((origin) => returnUrl.startsWith(`${origin}/`))) {
     throw new HttpsError("invalid-argument", "returnUrl no permitido.");
   }
+}
+
+/** Coarse device family from the User-Agent, for the backoffice transaction log. */
+function deviceFromUserAgent(ua: string | null): SessionDevice {
+  if (!ua) return "other";
+  if (/iPhone|iPad|iPod/i.test(ua)) return "ios";
+  if (/Android/i.test(ua)) return "android";
+  if (/Macintosh|Mac OS X/i.test(ua)) return "mac";
+  if (/Windows/i.test(ua)) return "windows";
+  return "other";
 }
 
 function clientIp(rawRequest: { headers: Record<string, unknown>; ip?: string } | undefined) {
@@ -174,6 +185,8 @@ export const createCybersourceSession = onCall(
     );
 
     const sessionRef = walletSessionRepo.newRef();
+    const rawUa = (request.rawRequest as { headers?: Record<string, unknown> } | undefined)?.headers?.["user-agent"];
+    const userAgent = typeof rawUa === "string" ? rawUa : null;
 
     try {
       const captureContext = await cybersourceService.createCaptureContext(
@@ -195,6 +208,10 @@ export const createCybersourceSession = onCall(
         uid: request.auth.uid,
         targetUserId,
         wallet,
+        device: deviceFromUserAgent(userAgent),
+        userAgent: userAgent ? userAgent.slice(0, 300) : null,
+        // Business the staff member belongs to; null until users carry one.
+        companyId: (targetUserSnap.get("companyId") as string | undefined) ?? null,
         tipAmount: fee.tipAmount,
         feeCharged: fee.totalFee,
         customerPays: fee.customerPays,

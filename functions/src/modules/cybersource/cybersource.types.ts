@@ -34,11 +34,18 @@ export interface TransientTokenInfo {
   billTo: Record<string, unknown> | null;
 }
 
+export type SessionDevice = "ios" | "android" | "mac" | "windows" | "other";
+
 /** /cybersourceSessions/{sessionId} — only touched by Cloud Functions. */
 export interface WalletSession {
   uid: string;
   targetUserId: string;
   wallet: CybersourceWallet;
+  /** Device family the customer paid from (parsed from the User-Agent). */
+  device?: SessionDevice;
+  userAgent?: string | null;
+  /** /companies doc id of the staff member's business, when set. */
+  companyId?: string | null;
   tipAmount: number;
   feeCharged: number;
   customerPays: number;
