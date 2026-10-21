@@ -8,6 +8,8 @@ import type {
   CybersourcePaymentResult,
   CybersourceWallet,
   GooglePayMode,
+  PaymentCard,
+  PaymentProcessorTrace,
   PayerAuthResult,
   TokenMethod,
   TransientTokenInfo,
@@ -89,18 +91,23 @@ function findKey(node: unknown, key: string, depth = 0): string | null {
  * payment type, so the sheet can only have produced that one. When the mode of a
  * Google Pay token can't be read, 3DS runs — the safe side.
  */
+/** The public claims of a transient token. Signature is not verified. */
+function decodeClaims(jwt: string): Record<string, any> {
+  try {
+    const part = jwt.split(".")[1] ?? "";
+    const base64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(Buffer.from(base64, "base64").toString("utf8"));
+  } catch (e) {
+    console.warn("[cybersource] could not decode transient token", e);
+    return {};
+  }
+}
+
 export function decodeTransientToken(
   jwt: string,
   wallet?: CybersourceWallet
 ): TransientTokenInfo {
-  let claims: Record<string, any> = {};
-  try {
-    const part = jwt.split(".")[1] ?? "";
-    const base64 = part.replace(/-/g, "+").replace(/_/g, "/");
-    claims = JSON.parse(Buffer.from(base64, "base64").toString("utf8"));
-  } catch (e) {
-    console.warn("[cybersource] could not decode transient token", e);
-  }
+  const claims = decodeClaims(jwt);
 
   const claimed = readValue(claims?.data?.type)?.toUpperCase() ?? "";
   const fromWallet = wallet === "apple_pay" ? "APPLEPAY" : wallet === "google_pay" ? "GOOGLEPAY" : "";
@@ -129,6 +136,78 @@ export function decodeTransientToken(
   );
 
   return { method, googlePayMode, skip3ds, billTo };
+}
+
+/**
+ * Cybersource card type codes. Unknown codes are kept raw instead of dropped:
+ * a code on screen beats an empty field when something new shows up.
+ */
+const CARD_BRANDS: Record<string, string> = {
+  "001": "Visa",
+  "002": "Mastercard",
+  "003": "American Express",
+  "004": "Discover",
+  "005": "Diners Club",
+  "007": "JCB",
+  "024": "Maestro",
+  "042": "Maestro",
+  "054": "Elo",
+  "062": "China UnionPay",
+};
+
+function brandFromType(type: unknown): string | null {
+  const code = readValue(type)?.trim();
+  if (!code) return null;
+  return CARD_BRANDS[code] ?? code;
+}
+
+function digitsOnly(value: unknown): string | null {
+  const clean = readValue(value)?.replace(/\D/g, "") ?? "";
+  return clean || null;
+}
+
+function cardFrom(source: unknown, tokenized: boolean): PaymentCard | null {
+  if (!source || typeof source !== "object") return null;
+  const node = source as Record<string, unknown>;
+  const brand = brandFromType(node.type);
+  const last4 = digitsOnly(node.suffix);
+  if (!brand && !last4) return null;
+  return { brand, last4, bin: digitsOnly(node.prefix ?? node.bin), tokenized };
+}
+
+/**
+ * The card to show on a tip.
+ *
+ * The payment response is the source of truth; the transient token is the
+ * fallback, because for some wallet tokens Cybersource echoes nothing about the
+ * card. For a wallet the suffix can belong to the device token (DPAN) rather
+ * than to the plastic, which is why `tokenized` travels with it.
+ */
+export function readPaymentCard(
+  payment: CybersourcePaymentResult,
+  transientToken?: string
+): PaymentCard | null {
+  const info = payment.paymentInformation ?? {};
+  const fromResponse = cardFrom(info.card, false) ?? cardFrom(info.tokenizedCard, true);
+  if (fromResponse) return fromResponse;
+
+  if (!transientToken) return null;
+  const claims = decodeClaims(transientToken);
+  const claimed = claims?.data?.paymentInformation ?? claims?.content?.paymentInformation;
+  if (!claimed || typeof claimed !== "object") return null;
+  const node = claimed as Record<string, unknown>;
+  return cardFrom(node.card, false) ?? cardFrom(node.tokenizedCard, true);
+}
+
+/** What the bank's settlement report and a dispute are matched by. */
+export function readProcessorTrace(payment: CybersourcePaymentResult): PaymentProcessorTrace {
+  const processor = payment.processorInformation ?? {};
+  return {
+    reconciliationId: payment.reconciliationId ?? null,
+    approvalCode: processor.approvalCode ?? null,
+    responseCode: processor.responseCode ?? null,
+    networkTransactionId: processor.networkTransactionId ?? processor.transactionId ?? null,
+  };
 }
 
 const BILL_TO_FIELDS = [

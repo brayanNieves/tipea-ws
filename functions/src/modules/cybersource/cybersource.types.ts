@@ -120,9 +120,46 @@ export interface ChargeTipResponse {
 export interface CybersourcePaymentResult {
   id?: string;
   status?: string;
+  /** What the bank's settlement report is matched by, not the REST payment id. */
+  reconciliationId?: string;
+  processorInformation?: {
+    approvalCode?: string;
+    responseCode?: string;
+    networkTransactionId?: string;
+    transactionId?: string;
+  };
+  paymentInformation?: {
+    /** The funding card. Wallets may send this, the tokenized one, or neither. */
+    card?: { type?: string; suffix?: string; prefix?: string; bin?: string };
+    /** The device token (DPAN) behind an Apple Pay / Google Pay payment. */
+    tokenizedCard?: { type?: string; suffix?: string; prefix?: string };
+  };
   errorInformation?: { reason?: string; message?: string };
   message?: string;
   reason?: string;
+}
+
+/**
+ * The card as it is shown to a human. For a wallet, `last4` may belong to the
+ * device token rather than to the plastic — that is what the processor returns
+ * and what the bank's report shows.
+ */
+export interface PaymentCard {
+  /** "Visa", "Mastercard"… or the raw Cybersource code when unknown. */
+  brand: string | null;
+  last4: string | null;
+  /** First six digits, when the processor sends them. */
+  bin: string | null;
+  /** True when it came from the tokenized card, not the funding one. */
+  tokenized: boolean;
+}
+
+/** Reconciliation data kept on the tip, for the bank's report and disputes. */
+export interface PaymentProcessorTrace {
+  reconciliationId: string | null;
+  approvalCode: string | null;
+  responseCode: string | null;
+  networkTransactionId: string | null;
 }
 
 /** Subset of the /risk/v1/* responses we rely on. */

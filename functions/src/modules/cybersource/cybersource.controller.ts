@@ -10,6 +10,8 @@ import {
   WalletNotAvailableError,
   cybersourceService,
   decodeTransientToken,
+  readPaymentCard,
+  readProcessorTrace,
 } from "./cybersource.service";
 import { WalletSessionError, walletSessionRepo } from "./wallet-session.repository";
 import type {
@@ -479,6 +481,13 @@ export const chargeCybersourceTip = onCall(
     }
 
     const paymentId = payment.id ?? null;
+    // Kept on the tip so the card can be shown without going back to the
+    // Business Center, and so the bank's settlement report can be matched.
+    const card = readPaymentCard(payment, transientToken);
+    const processorTrace = readProcessorTrace(payment);
+    if (!card) {
+      console.warn(`⚠️ [chargeCybersourceTip] no card details | ${logCtx} | payment=${paymentId}`);
+    }
     const tipRef = db.collection("tips").doc();
     const trimmedComment =
       typeof comment === "string" ? comment.trim().slice(0, MAX_COMMENT_LENGTH) || null : null;
@@ -501,6 +510,8 @@ export const chargeCybersourceTip = onCall(
         stripePaymentIntentId: null,
         paymentProcessor: "cybersource",
         cybersourcePaymentId: paymentId,
+        card,
+        processorTrace,
         authMethod: session.method ?? null,
         googlePayMode: session.googlePayMode ?? null,
         threeDS: session.threeDs ?? "none",
@@ -515,6 +526,8 @@ export const chargeCybersourceTip = onCall(
         status: "paid",
         paymentId,
         tipId: tipRef.id,
+        card,
+        processorTrace,
         ...(authentication ? { authentication } : {}),
       });
       await batch.commit();
