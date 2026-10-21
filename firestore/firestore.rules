@@ -120,6 +120,19 @@ service cloud.firestore {
       allow write: if request.auth != null && request.auth.token.admin == true;
     }
 
+    // ── wallet_sessions / payment_logs ─────────────────────
+    // One doc per Cybersource payment attempt, and one log per gateway call
+    // (sanitized responses). Written only by Cloud Functions; the backoffice
+    // transaction log reads them.
+    match /wallet_sessions/{sessionId} {
+      allow read: if request.auth != null && request.auth.token.admin == true;
+      allow write: if false;
+    }
+    match /payment_logs/{logId} {
+      allow read: if request.auth != null && request.auth.token.admin == true;
+      allow write: if false;
+    }
+
     // ── config ─────────────────────────────────────────────
     // /config/customerFee — el fee que se le cobra al CLIENTE encima de la
     // propina. La página pública de propina lo lee para mostrar el desglose,
