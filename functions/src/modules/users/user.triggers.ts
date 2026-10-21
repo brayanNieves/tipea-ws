@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
-import { admin, db } from "../../config/firebase";
+import { db } from "../../config/firebase";
 import { mailer } from "../../mailer_service";
+import { FieldValue } from "firebase-admin/firestore";
 
 // ─────────────────────────────────────────────────────────────
 // onUserCreated
@@ -27,7 +28,7 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
       planId: "plan_starter",
       active: true,
       emailVerified: user.emailVerified ?? false,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     };
 
     if (user.email) userPayload.email = user.email;
@@ -40,7 +41,7 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
       userId: user.uid,
       planId: "plan_starter",
       status: "active",
-      startDate: admin.firestore.FieldValue.serverTimestamp(),
+      startDate: FieldValue.serverTimestamp(),
       renewalDate,
       canceledAt: null,
     });
@@ -51,7 +52,7 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
       message: `New user signed up: ${user.email ?? user.uid}`,
       userId: user.uid,
       read: false,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
 
     await batch.commit();

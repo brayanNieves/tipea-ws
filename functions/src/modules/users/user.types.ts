@@ -1,6 +1,6 @@
 import type { firestore } from "firebase-admin";
 
-export type UserRole = "dj" | "waiter" | "vallet" | "bartender" | "admin" | "other";
+export type UserRole = "dj" | "waiter" | "vallet" | "bartender" | "packer" | "car_washer" | "barber" | "admin" | "other";
 
 export interface User {
   /**

@@ -1,9 +1,9 @@
-import * as admin from "firebase-admin";
+import { Timestamp } from "firebase-admin/firestore";
 
 // ─────────────────────────────────────────────────────────────
 // USERS
 // ─────────────────────────────────────────────────────────────
-export type UserRole = "dj" | "waiter" | "vallet" | "bartender" | "other";
+export type UserRole = "dj" | "waiter" | "vallet" | "bartender" | "packer" | "car_washer" | "barber" | "other";
 
 export interface BankAccount {
   bankName: string;
@@ -14,8 +14,8 @@ export interface BankAccount {
   holderCedula: string;
   holderPhone: string;
   verified: boolean;
-  addedAt: admin.firestore.Timestamp;
-  updatedAt: admin.firestore.Timestamp;
+  addedAt: Timestamp;
+  updatedAt: Timestamp;
 }
 
 export interface User {
@@ -27,7 +27,7 @@ export interface User {
   pin: string | null;
   active: boolean;
   bankAccount: BankAccount | null;
-  createdAt: admin.firestore.Timestamp;
+  createdAt: Timestamp;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -47,16 +47,130 @@ export interface Plan {
 export type TipStatus = "pending" | "paid";
 export type TipSource = "qr" | "manual";
 
+// Per-transaction pricing ledger written by the pricing engine. Lets us
+// audit profitability without re-running the math. Optional on `Tip` because
+// tips created before the pricing engine rolled out won't have it; the
+// `onTipCreated` trigger falls back to plan-based commissions in that case.
+export type TipPricingPaymentMethod =
+  | "card"
+  | "apple_pay"
+  | "google_pay"
+  | "wallet"
+  | "dev";
+
+export type TipPricingCurrency = "dop" | "usd";
+
+export interface TipPricingLedger {
+  tipAmount?: number;              // DOP — the tip; what staff receive (100%)
+  customerFee?: number;            // DOP — fee charged to the customer; TipApp revenue
+  visibleAmount: number;           // DOP — what the customer pays: tipAmount + customerFee
+  stripeProcessingFee: number;     // DOP — Stripe's 2.9% + $0.30 slice (informational)
+  stripeConversionFee: number;     // DOP — Stripe's 1% FX slice (0 if charged in DOP)
+  platformFee: number;             // DOP — staff commission. Always 0.
+  marginSafety: number;            // DOP — @deprecated, always 0
+  staffNet: number;                // DOP — === tipAmount. Staff receive 100%.
+  totalProcessingCost: number;     // DOP — stripeProcessingFee + stripeConversionFee
+  profitability: number;           // DOP — customerFee
+  exchangeRate: number;            // DOP per USD used in the calc
+  currency: TipPricingCurrency;
+  paymentMethod: TipPricingPaymentMethod;
+  walletUsed: boolean;             // true when paid from wallet (no Stripe at tip time)
+  processor?: "stripe" | "cybersource"; // gateway that charged; absent on legacy rows
+}
+
 export interface Tip {
-  userId: string;
-  amount: number;
-  commissionPct: number;
-  commissionAmt: number;
-  netAmount: number;
+  userId: string;                  // staff (recipient) UID
+  senderUid?: string;              // anonymous customer Firebase UID — drives /tippers counters
+  amount: number;                  // the tip — what staff receive (100%). === tipAmount
+  tipAmount?: number;              // explicit alias of `amount`; written by the new FE
+  feeCharged?: number;             // DOP — fee charged to the CUSTOMER. TipApp revenue.
+  customerPaid?: number;           // DOP — amount + feeCharged. What the customer paid.
+  serviceFeeAmount?: number;       // legacy: fee paid by customer on top of tip (DOP) — direct-pay path
+  totalChargedAmount?: number;     // legacy: tip + fee — what Stripe charged customer (DOP) — direct-pay path
+  customerId?: string;             // legacy: hashed phone — present when paid from /balances (deprecated path)
+  paidFromBalance?: boolean;       // legacy /balances path — kept for back-compat
+  paidFromWallet?: boolean;        // true when debited from /tippers/{senderUid}.walletBalance
+  commissionPct: number;           // always 0 — nothing is deducted from staff
+  commissionAmt: number;           // always 0
+  netAmount: number;               // === amount. Staff receive 100%.
   source: TipSource;
   status: TipStatus;
   payoutId: string | null;
-  createdAt: admin.firestore.Timestamp;
+  createdAt: Timestamp;
+  pricing?: TipPricingLedger;      // populated for tips created post-pricing-engine rollout
+  paymentProcessor?: "stripe" | "cybersource"; // absent on legacy rows (= stripe)
+  cybersourcePaymentId?: string | null;        // /pts/v2/payments id when paid via Cybersource
+}
+
+// ─────────────────────────────────────────────────────────────
+// CUSTOMER BALANCES (top-up system)
+// ─────────────────────────────────────────────────────────────
+export interface Balance {
+  phone: string;                              // normalized 10-digit DR phone
+  email: string | null;
+  balance: number;                            // current available balance (DOP)
+  totalLoaded: number;                        // sum of all top-ups ever
+  totalTipped: number;                        // sum of all balance-paid tips ever
+  createdAt: Timestamp;
+  lastUsedAt: Timestamp;
+}
+
+// Append-only ledger of every successful top-up.
+//
+// `tipappCost` is the loss-leader signal: visible == credit, so TipApp
+// absorbs Stripe's processing + conversion fees on every top-up. Tracking
+// it here lets analytics surface "how much are we burning to acquire wallet
+// users" without joining against Stripe.
+export interface Topup {
+  customerId: string;
+  grossAmount: number;                        // what the customer paid Stripe (DOP)
+  stripeFee: number | null;                   // legacy: total fee field (kept for back-compat with v1 docs)
+  stripeProcessingFee?: number;               // DOP — Stripe's 2.9% + $0.30 slice (estimated by pricing engine)
+  stripeConversionFee?: number;               // DOP — Stripe's 1% FX slice (0 if charged in DOP)
+  tipappCost?: number;                        // DOP — total fees absorbed by TipApp on this top-up
+  exchangeRate?: number;                      // DOP per USD used at top-up time
+  netAmount: number;                          // amount credited to balance (== gross: TipApp absorbs Stripe fee)
+  createdAt: Timestamp;
+  stripePaymentIntentId: string;
+}
+
+// ─────────────────────────────────────────────────────────────
+// TIPPERS — anonymous customers tracked by Firebase auth UID.
+// Drives the wallet onboarding trigger and stores the wallet balance
+// for the new "tip first, opt into wallet later" flow.
+// ─────────────────────────────────────────────────────────────
+export interface Tipper {
+  totalTipsCount: number;                     // count of successful tips (any payment method)
+  totalTipsAmount: number;                    // sum of tip amounts in DOP
+  walletBalance: number;                      // current wallet balance in DOP
+  totalLoaded: number;                        // sum of all wallet top-ups
+  totalSpentFromWallet: number;               // sum of tips paid from wallet
+  hasSeenWalletOnboarding: boolean;           // sticky once shown — prevents nagging
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  lastTipAt?: Timestamp;
+}
+
+// Append-only event log for analytics. Drives "onboarding shown",
+// "topup success", "wallet usage" downstream pipelines.
+export type WalletEventType =
+  | "onboarding_shown"
+  | "onboarding_dismissed"
+  | "topup_intent_created"
+  | "topup_success"
+  | "wallet_tip"
+  | "wallet_insufficient"
+  | "email_verify_started"
+  | "email_verify_success"
+  | "email_verify_failed";
+
+export interface WalletEvent {
+  uid: string;
+  type: WalletEventType;
+  amount?: number;
+  staffId?: string;
+  paymentIntentId?: string;
+  createdAt: Timestamp;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -78,11 +192,11 @@ export interface Payout {
   holderName: string;
   referenceNumber: string | null;
   receiptUrl: string | null;
-  receiptUploadedAt: admin.firestore.Timestamp | null;
-  transferDate: admin.firestore.Timestamp;
+  receiptUploadedAt: Timestamp | null;
+  transferDate: Timestamp;
   notes: string | null;
   status: PayoutStatus;
-  createdAt: admin.firestore.Timestamp;
+  createdAt: Timestamp;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -101,8 +215,8 @@ export interface Commission {
   commissionPct: number;
   commissionAmt: number;
   status: CommissionStatus;
-  settledAt: admin.firestore.Timestamp | null;
-  createdAt: admin.firestore.Timestamp;
+  settledAt: Timestamp | null;
+  createdAt: Timestamp;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -117,8 +231,8 @@ export interface DailySummary {
   tipCount: number;
   activeUsers: number;
   closed: boolean;
-  closedAt?: admin.firestore.Timestamp;
-  updatedAt: admin.firestore.Timestamp;
+  closedAt?: Timestamp;
+  updatedAt: Timestamp;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -135,7 +249,7 @@ export interface UserDailyStats {
   tipCount: number;
   pending: number;
   paidOut: number;
-  updatedAt: admin.firestore.Timestamp;
+  updatedAt: Timestamp;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -147,9 +261,9 @@ export interface Subscription {
   userId: string;
   planId: string;
   status: SubscriptionStatus;
-  startDate: admin.firestore.Timestamp;
+  startDate: Timestamp;
   renewalDate: Date;
-  canceledAt: admin.firestore.Timestamp | null;
+  canceledAt: Timestamp | null;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -167,5 +281,5 @@ export interface Notification {
   amount?: number;
   commissionAmt?: number;
   read: boolean;
-  createdAt: admin.firestore.Timestamp;
+  createdAt: Timestamp;
 }

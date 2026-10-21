@@ -1,41 +1,49 @@
+import { assertMinTip } from "./tip-rules";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { db } from "../../config/firebase";
 import { buildStripeClient, stripeSecretKey } from "../../config/stripe";
 import { mailer } from "../../mailer_service";
 import { getUsdToDopRate } from "./exchange-rate.service";
 import { paymentConfigRepo } from "./payment-config.repository";
+import { customerFeeRepo } from "./customer-fee.repository";
+import { calculateCustomerFee } from "./service-fee";
+import { pricingService } from "../pricing/pricing.service";
+import type { PricingPaymentMethod } from "../pricing/pricing.types";
 
 // ─────────────────────────────────────────────────────────────
 // createPaymentIntent
-// Crea un Stripe PaymentIntent para procesar el pago de un tip.
+// Crea un Stripe PaymentIntent para procesar el pago de un tip directo.
 //
-// Request:  { amount: number, targetUserId: string }
-//           amount en pesos dominicanos (ej: 500 = RD$500).
+// Request:  { amount: number, targetUserId: string, paymentMethod?: 'card' | 'apple_pay' | 'google_pay' }
+//           amount = la PROPINA en DOP (lo que el cliente selecciona y lo que
+//           el staff recibe COMPLETO — el 100%).
+//
+//           El cliente paga la propina + un fee de servicio configurado en
+//           /config/customerFee (editable en el backoffice: /admin/fee-config).
+//           El total cobrado a Stripe es `customerPays = amount + feeCharged`.
+//           El fee se recalcula SIEMPRE en el servidor; nunca se confía en un
+//           total enviado por el cliente.
 //
 // Config (`appConfig/payment`):
 //   - chargeInUsd (bool, default true)
 //       true:  convierte DOP → USD con tipo de cambio (cache 24h) y cobra USD
 //       false: cobra directamente en DOP
-//   - feePct (number, default 7)
-//       fee de pasarela cobrado AL CLIENTE sobre el monto del tip.
-//       Cliente paga `amount * (1 + feePct/100)`. 0 = sin fee.
 //
 // Response shape:
 //   {
 //     clientSecret, paymentIntentId,
-//     amountPesos,        // tip original (DOP)
-//     feePct, feeAmount,  // fee aplicado
-//     totalChargedDop,    // total en DOP (tip + fee)
+//     tipAmount,          // la propina (DOP) — lo que recibe el staff, 100%
+//     feeCharged,         // fee cobrado al cliente (DOP)
+//     customerPays,       // tipAmount + feeCharged — lo que se cobra a Stripe
+//     amountPesos,        // === customerPays (back-compat)
 //     displayAmount,      // monto a mostrar en Apple Pay / UI (en displayCurrency)
 //     displayCurrency,    // "USD" | "DOP"
 //     chargedCurrency,    // "usd" | "dop" — lo que Stripe cobra
-//     dopRate?, rateSource? // solo en modo USD
+//     dopRate?, rateSource?, amountUsd? // solo en modo USD
+//     pricing,            // bloque opaco — el FE lo adjunta al /tips doc tal cual
 //   }
 //
-// IMPORTANTE: el frontend DEBE usar `displayAmount` y `displayCurrency`
-// cuando arma el Apple Pay PaymentRequest, para que el monto mostrado
-// al usuario coincida con el que Stripe va a cobrar. De otro modo el
-// usuario firma por un monto y se le cobra otro.
+// El FE NO debe mostrar `pricing` al usuario. Es solo para el ledger.
 // ─────────────────────────────────────────────────────────────
 export const createPaymentIntent = onCall(
   { secrets: [stripeSecretKey] },
@@ -44,9 +52,10 @@ export const createPaymentIntent = onCall(
       throw new HttpsError("unauthenticated", "Debes iniciar sesión para realizar un pago.");
     }
 
-    const { amount, targetUserId } = request.data as {
+    const { amount, targetUserId, paymentMethod } = request.data as {
       amount?: number;
       targetUserId?: string;
+      paymentMethod?: PricingPaymentMethod;
     };
 
     if (!amount || typeof amount !== "number" || amount <= 0) {
@@ -61,6 +70,7 @@ export const createPaymentIntent = onCall(
     if (!targetUserSnap.exists) {
       throw new HttpsError("not-found", `Usuario ${targetUserId} no encontrado.`);
     }
+    await assertMinTip(amount, targetUserSnap);
 
     let stripe;
     try {
@@ -69,16 +79,25 @@ export const createPaymentIntent = onCall(
       throw new HttpsError("failed-precondition", "Configuración de pagos no disponible.");
     }
 
-    // Leer config (chargeInUsd + feePct).
-    const { chargeInUsd, feePct } = await paymentConfigRepo.read();
+    // `amount` es la PROPINA (lo que recibe el staff, 100%). El cliente paga
+    // la propina + el fee configurado en /config/customerFee. El servidor es
+    // la autoridad: recalcula el fee acá, nunca confía en un total del cliente.
+    const tipAmountDop = amount;
+    const feeConfig = await customerFeeRepo.read();
+    const fee = calculateCustomerFee(
+      tipAmountDop,
+      feeConfig.percentageFee,
+      feeConfig.fixedFee
+    );
+    const visibleAmountDop = fee.customerPays;
 
-    // Fee de pasarela: cliente paga amount + feePct%.
-    const feeMultiplier = 1 + feePct / 100;
-    const amountWithFeeDop = amount * feeMultiplier;
-    const feeAmountDop = amountWithFeeDop - amount;
+    const { chargeInUsd } = await paymentConfigRepo.read();
 
-    // Valores computados según el modo. Los declaramos up-front para
-    // poder devolverlos en la respuesta.
+    // Defaults to 'card'; FE can pass 'apple_pay' / 'google_pay' so analytics
+    // attributes the channel correctly. Wallet/dev are not valid here.
+    const channel: PricingPaymentMethod =
+      paymentMethod === "apple_pay" || paymentMethod === "google_pay" ? paymentMethod : "card";
+
     let paymentIntentPayload: {
       amount: number;
       currency: "usd" | "dop";
@@ -94,11 +113,11 @@ export const createPaymentIntent = onCall(
     let logSuffix: string;
 
     if (chargeInUsd) {
-      // ── Modo USD: convertir DOP (con fee) → USD ────────────
+      // ── Modo USD: convertir DOP → USD ──────────────────────
       const rateInfo = await getUsdToDopRate();
       dopRate = rateInfo.rate;
       rateSource = rateInfo.source;
-      amountUsd = amountWithFeeDop / dopRate;
+      amountUsd = visibleAmountDop / dopRate;
       const amountInCents = Math.round(amountUsd * 100);
 
       if (amountInCents < 50) {
@@ -111,77 +130,104 @@ export const createPaymentIntent = onCall(
       displayAmount = Number(amountUsd.toFixed(2));
       displayCurrency = "USD";
       chargedCurrency = "usd";
-
-      paymentIntentPayload = {
-        amount: amountInCents,
-        currency: "usd",
-        automatic_payment_methods: { enabled: true },
-        metadata: {
-          senderUid: request.auth.uid,
-          targetUserId,
-          amountPesos: amount,
-          feePct: feePct.toString(),
-          feeAmount: feeAmountDop.toFixed(2),
-          totalChargedDop: amountWithFeeDop.toFixed(2),
-          amountUsd: amountUsd.toFixed(2),
-          dopRate: dopRate.toString(),
-          rateSource,
-          chargeMode: "usd",
-        },
-      };
-
-      logSuffix =
-        `RD$${amount} + ${feePct}% = RD$${amountWithFeeDop.toFixed(2)} ` +
-        `→ US$${amountUsd.toFixed(2)} (rate=${dopRate}, src=${rateSource})`;
+      logSuffix = `RD$${visibleAmountDop} → US$${amountUsd.toFixed(2)} (rate=${dopRate}, src=${rateSource})`;
     } else {
-      // ── Modo DOP: cobrar directo en pesos (con fee) ────────
-      const amountInCentavos = Math.round(amountWithFeeDop * 100);
-
-      displayAmount = Number(amountWithFeeDop.toFixed(2));
+      // ── Modo DOP: cobrar directo en pesos ──────────────────
+      const amountInCentavos = Math.round(visibleAmountDop * 100);
+      displayAmount = Number(visibleAmountDop.toFixed(2));
       displayCurrency = "DOP";
       chargedCurrency = "dop";
+      logSuffix = `RD$${visibleAmountDop} (charged in DOP)`;
 
       paymentIntentPayload = {
         amount: amountInCentavos,
         currency: "dop",
         automatic_payment_methods: { enabled: true },
+        metadata: {},
+      };
+    }
+
+    // Desglose centralizado. El engine recibe la PROPINA + el fee al cliente;
+    // `staffNet` sale siempre igual a la propina (100%).
+    const pricing = pricingService.computeWithRate(
+      tipAmountDop,
+      dopRate ?? (await getUsdToDopRate()).rate,
+      channel,
+      chargedCurrency,
+      fee.totalFee
+    );
+
+    // Build the PI payload now that we have the pricing block to embed.
+    const baseMetadata: Record<string, string | number> = {
+      senderUid: request.auth.uid,
+      targetUserId,
+      tipAmount: pricing.tipAmount,
+      customerFee: pricing.customerFee,
+      visibleAmount: pricing.visibleAmount,
+      stripeProcessingFee: pricing.stripeProcessingFee,
+      stripeConversionFee: pricing.stripeConversionFee,
+      platformFee: pricing.platformFee,
+      marginSafety: pricing.marginSafety,
+      staffNet: pricing.staffNet,
+      profitability: pricing.profitability,
+      exchangeRate: pricing.exchangeRate,
+      paymentMethod: pricing.paymentMethod,
+      chargeMode: chargedCurrency,
+    };
+
+    if (chargeInUsd) {
+      const amountInCents = Math.round((amountUsd as number) * 100);
+      paymentIntentPayload = {
+        amount: amountInCents,
+        currency: "usd",
+        automatic_payment_methods: { enabled: true },
         metadata: {
-          senderUid: request.auth.uid,
-          targetUserId,
-          amountPesos: amount,
-          feePct: feePct.toString(),
-          feeAmount: feeAmountDop.toFixed(2),
-          totalChargedDop: amountWithFeeDop.toFixed(2),
-          chargeMode: "dop",
+          ...baseMetadata,
+          amountUsd: (amountUsd as number).toFixed(2),
+          dopRate: (dopRate as number).toString(),
+          rateSource: rateSource as string,
         },
       };
-
-      logSuffix = `RD$${amount} + ${feePct}% = RD$${amountWithFeeDop.toFixed(2)} (charged in DOP)`;
+    } else {
+      const amountInCentavos = Math.round(visibleAmountDop * 100);
+      paymentIntentPayload = {
+        amount: amountInCentavos,
+        currency: "dop",
+        automatic_payment_methods: { enabled: true },
+        metadata: baseMetadata,
+      };
     }
 
     try {
       const paymentIntent = await stripe.paymentIntents.create(paymentIntentPayload);
 
       console.log(
-        `✅ [createPaymentIntent] id=${paymentIntent.id} | from=${request.auth.uid} | to=${targetUserId} | ${logSuffix}`
+        `✅ [createPaymentIntent] id=${paymentIntent.id} | from=${request.auth.uid} | to=${targetUserId} | ${logSuffix} | tip=${pricing.tipAmount} | fee=${pricing.customerFee} | staffNet=${pricing.staffNet}`
       );
 
       return {
         clientSecret: paymentIntent.client_secret,
         paymentIntentId: paymentIntent.id,
-        // Monto original y fee (para mostrar desglose en la UI si se quiere)
-        amountPesos: amount,
-        feePct,
-        feeAmount: Number(feeAmountDop.toFixed(2)),
-        totalChargedDop: Number(amountWithFeeDop.toFixed(2)),
-        // Lo que el frontend DEBE pasar a Apple Pay / Stripe Elements
+        // ── Desglose del fee al cliente ────────────────────────
+        // El staff recibe tipAmount completo; el cliente paga customerPays.
+        tipAmount: fee.tipAmount,
+        feeCharged: fee.totalFee,
+        feePercentageAmount: fee.percentageAmount,
+        feeFixed: fee.fixedFee,
+        customerPays: fee.customerPays,
+        // Total cobrado al cliente (DOP) — se mantiene el nombre por
+        // back-compat con callers del FE que ya lo leían.
+        amountPesos: visibleAmountDop,
+        // Lo que el frontend DEBE pasar a Apple Pay / Stripe Elements.
         displayAmount,
         displayCurrency,
         chargedCurrency,
-        // Información de conversión (solo presente en modo USD)
+        // Información de conversión (solo presente en modo USD).
         amountUsd: amountUsd !== null ? Number(amountUsd.toFixed(2)) : null,
         dopRate,
         rateSource,
+        // Bloque opaco de pricing — el FE lo adjunta directo al /tips doc.
+        pricing,
       };
     } catch (error) {
       console.error("❌ [createPaymentIntent]", error);

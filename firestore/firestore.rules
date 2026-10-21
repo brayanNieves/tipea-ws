@@ -2,29 +2,65 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Rank of a QR funnel step, for forward-only progression checks.
+    function qrRank(s) {
+      return s == 'completed' ? 2 : (s == 'started' ? 1 : 0);
+    }
+
     // ── users ──────────────────────────────────────────────
-    // Each user can only read/write their own document
+    // Read: any authenticated user (including anonymous customers scanning a
+    //   QR) — needed to display the staff's name/role/photo on the tip page.
+    //   Heads-up: this exposes the full staff doc, including email/phone and
+    //   the bank-account block (only `accountNumberLast4` is plaintext; the
+    //   full account number is encrypted at rest by the bulk-create flow).
+    //   For a stricter posture, denormalize a `/staff_public/{userId}` doc
+    //   with non-sensitive fields and lock /users back down to self-only.
+    // Update: still self-only.
     match /users/{userId} {
-      allow read, update: if request.auth != null && request.auth.uid == userId;
+      allow read: if request.auth != null;
+      // Staff edit their own profile, but not what the admin assigns them:
+      // business (sets their minimum tip), role, plan or active flag.
+      allow update: if request.auth != null && (
+        request.auth.token.admin == true ||
+        (request.auth.uid == userId &&
+          !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['companyId', 'role', 'planId', 'active']))
+      );
       allow create: if request.auth != null;
       allow delete: if false;
     }
 
     // ── tips ───────────────────────────────────────────────
     // Any authenticated user can create a tip (QR scan)
-    // Only the tip owner can read it
-    // Updates/deletes only via Cloud Functions
+    // Read allowed for the recipient (staff) OR the sender (customer who
+    //   created it — needed for the song-request status listener).
+    // Updates/deletes only via Cloud Functions, except admins flagging
+    //   suspicionReviewed from the backoffice.
+    // Clients MUST NOT set paidFromBalance: true — that path is callable-only
+    // (tipFromBalance), which writes via the admin SDK and bypasses these rules.
     match /tips/{tipId} {
-      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
-      allow create: if request.auth != null;
-      allow update, delete: if false;
+      allow read: if request.auth != null && (
+        request.auth.uid == resource.data.userId ||
+        request.auth.uid == resource.data.get('senderUid', '') ||
+        request.auth.token.admin == true
+      );
+      allow create: if request.auth != null
+        && request.resource.data.get('paidFromBalance', false) == false;
+      // Admins can only flag a suspicious tip as reviewed — no other field.
+      allow update: if request.auth != null
+        && request.auth.token.admin == true
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['suspicionReviewed']);
+      allow delete: if false;
     }
 
     // ── payouts ────────────────────────────────────────────
     // Users can read their own payouts
     // Only admin (you) can create payouts
     match /payouts/{payoutId} {
-      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow read: if request.auth != null && (
+        request.auth.uid == resource.data.userId ||
+        request.auth.token.admin == true
+      );
       allow write: if request.auth != null && request.auth.token.admin == true;
     }
 
@@ -51,10 +87,67 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ── qr_scans ───────────────────────────────────────────
+    // QR funnel events, one mutable doc per visitor session (id = sessionId),
+    // written by the customer tip page under anonymous auth. Backoffice reads
+    // them for the /analytics/qr funnel. The create path is public, so it is
+    // constrained tightly and steps only move forward (scanned → started →
+    // completed). Consider enabling App Check to further blunt spam that could
+    // inflate a staff member's scan counts.
+    match /qr_scans/{sessionId} {
+      allow read: if request.auth != null && request.auth.token.admin == true;
+
+      // First write must be a fresh 'scanned' event for an existing staff member.
+      allow create: if request.auth != null
+        && request.resource.data.status == 'scanned'
+        && request.resource.data.userId is string
+        && exists(/databases/$(database)/documents/users/$(request.resource.data.userId))
+        && request.resource.data.get('tipId', null) == null
+        && request.resource.data.get('amount', null) == null
+        && request.resource.data.get('completedAt', null) == null;
+
+      // Progression only: never downgrade a step, and identity fields are frozen.
+      allow update: if request.auth != null
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.scannedAt == resource.data.scannedAt
+        && request.resource.data.status in ['scanned', 'started', 'completed']
+        && qrRank(request.resource.data.status) >= qrRank(resource.data.status);
+
+      allow delete: if false;
+    }
+
     // ── plans ──────────────────────────────────────────────
     // Anyone can read plans (needed for signup page)
     // Only admin can modify
     match /plans/{planId} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.token.admin == true;
+    }
+
+    // ── companies ──────────────────────────────────────────
+    // Businesses staff belong to (users.companyId). The public tip page reads
+    // the business's minTip / suggestedTips (anonymous auth); no PII here.
+    match /companies/{companyId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.token.admin == true;
+    }
+
+    // ── payment_logs ───────────────────────────────────────
+    // One log per Cybersource gateway call (sanitized responses), keyed by the
+    // cybersourceSessions id. Written only by Cloud Functions; the backoffice
+    // transaction log reads them.
+    match /payment_logs/{logId} {
+      allow read: if request.auth != null && request.auth.token.admin == true;
+      allow write: if false;
+    }
+
+    // ── config ─────────────────────────────────────────────
+    // /config/customerFee — el fee que se le cobra al CLIENTE encima de la
+    // propina. La página pública de propina lo lee para mostrar el desglose,
+    // así que la lectura es abierta (igual que /plans). Solo admin escribe.
+    // El servidor recalcula el fee en createPaymentIntent de todos modos,
+    // así que este doc no es una superficie de confianza para el cobro.
+    match /config/{docId} {
       allow read: if true;
       allow write: if request.auth != null && request.auth.token.admin == true;
     }
@@ -70,6 +163,54 @@ service cloud.firestore {
     match /notifications/{notifId} {
       allow read, update: if request.auth != null && request.auth.token.admin == true;
       allow write: if false;
+    }
+
+    // ── balances ──────────────────────────────────────────
+    // Customer balance is callable-only (lookupBalance / confirmTopup /
+    // tipFromBalance). Block all direct client access.
+    match /balances/{customerId} {
+      allow read, write: if false;
+    }
+
+    // ── topups ────────────────────────────────────────────
+    // Append-only ledger written exclusively by confirmTopup callable.
+    match /topups/{topupId} {
+      allow read, write: if false;
+    }
+
+    // ── cybersourceSessions ────────────────────────────────
+    // Apple Pay / Google Pay sessions (Cybersource), one per payment attempt.
+    // Written only by Cloud Functions; admins read them in the transaction log.
+    match /cybersourceSessions/{sessionId} {
+      allow read: if request.auth != null && request.auth.token.admin == true;
+      allow write: if false;
+    }
+
+    // ── tippers ──────────────────────────────────────────
+    // Per-uid wallet + onboarding state. Callable-only (getTipper /
+    // markOnboardingSeen / createWalletTopupIntent / confirmWalletTopup /
+    // tipFromWallet). Block direct client access — even reads, since the
+    // wallet balance must reflect the latest atomic transaction state.
+    match /tippers/{uid} {
+      allow read, write: if false;
+    }
+
+    // ── wallet_events ────────────────────────────────────
+    // Append-only analytics ledger. Callable-only writes; admin-only reads.
+    match /wallet_events/{eventId} {
+      allow read: if request.auth != null && request.auth.token.admin == true;
+      allow write: if false;
+    }
+
+    // ── email-verification mappings ───────────────────────
+    // Both written exclusively by `verifyWalletOtp` callable (admin SDK).
+    // /uid_to_canon_email/{uid} — proves a uid has verified an email.
+    // /email_canon_uid/{emailHash} — first verifier of an email becomes its canonical wallet owner.
+    match /uid_to_canon_email/{uid} {
+      allow read, write: if false;
+    }
+    match /email_canon_uid/{emailHash} {
+      allow read, write: if false;
     }
   }
 }
