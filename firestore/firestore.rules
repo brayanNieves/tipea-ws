@@ -120,6 +120,13 @@ service cloud.firestore {
       allow write: if request.auth != null && request.auth.token.admin == true;
     }
 
+    // ── companies ──────────────────────────────────────────
+    // Businesses staff belong to; the transaction log shows their names.
+    match /companies/{companyId} {
+      allow read: if request.auth != null && request.auth.token.admin == true;
+      allow write: if false;
+    }
+
     // ── payment_logs ───────────────────────────────────────
     // One log per Cybersource gateway call (sanitized responses), keyed by the
     // cybersourceSessions id. Written only by Cloud Functions; the backoffice
