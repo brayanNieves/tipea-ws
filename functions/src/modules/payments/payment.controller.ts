@@ -83,7 +83,7 @@ export const createPaymentIntent = onCall(
     // la propina + el fee configurado en /config/customerFee. El servidor es
     // la autoridad: recalcula el fee acá, nunca confía en un total del cliente.
     const tipAmountDop = amount;
-    const feeConfig = await customerFeeRepo.read();
+    const feeConfig = await customerFeeRepo.readFor(targetUserSnap);
     const fee = calculateCustomerFee(
       tipAmountDop,
       feeConfig.percentageFee,

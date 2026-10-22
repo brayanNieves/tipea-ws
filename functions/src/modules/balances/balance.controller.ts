@@ -230,7 +230,7 @@ export const tipFromBalance = onCall(async (request) => {
 
   // The fee is charged to the CUSTOMER: tip + fee are debited from the
   // balance and staff receive the full tip.
-  const feeConfig = await customerFeeRepo.read();
+  const feeConfig = await customerFeeRepo.readFor(staffSnap);
   const fee = calculateCustomerFee(amount, feeConfig.percentageFee, feeConfig.fixedFee);
 
   try {

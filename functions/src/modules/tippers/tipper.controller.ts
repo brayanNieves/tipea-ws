@@ -335,7 +335,7 @@ export const tipFromWallet = onCall(async (request) => {
 
   // The fee is charged to the CUSTOMER: tip + fee are debited from the
   // wallet and staff receive the full tip. Recomputed here, server-side.
-  const feeConfig = await customerFeeRepo.read();
+  const feeConfig = await customerFeeRepo.readFor(staffSnap);
   const fee = calculateCustomerFee(amount, feeConfig.percentageFee, feeConfig.fixedFee);
 
   // Wallet breakdown (no Stripe fees on this row; the top-up already

@@ -47,4 +47,31 @@ export const customerFeeRepo = {
       return DEFAULT_CUSTOMER_FEE;
     }
   },
+
+  /**
+   * Fee for a tip to this staff member: their active business's
+   * feePercentage / feeFixed (/companies/{users.companyId}) override the
+   * global fee field by field; null or missing keeps the global value.
+   * Never throws.
+   */
+  async readFor(staffSnap: FirebaseFirestore.DocumentSnapshot): Promise<CustomerFeeConfig> {
+    const global = await this.read();
+    try {
+      const companyId = staffSnap.get("companyId");
+      if (typeof companyId !== "string" || !companyId) return global;
+      const company = await db.doc(`companies/${companyId}`).get();
+      if (!company.exists || company.get("active") === false) return global;
+
+      const pct = company.get("feePercentage");
+      const fixed = company.get("feeFixed");
+      return {
+        percentageFee:
+          typeof pct === "number" && Number.isFinite(pct) && pct >= 0 && pct < 100 ? pct : global.percentageFee,
+        fixedFee: typeof fixed === "number" && Number.isFinite(fixed) && fixed >= 0 ? fixed : global.fixedFee,
+      };
+    } catch (e) {
+      console.warn("[customerFeeRepo.readFor] company read failed, using global fee", e);
+      return global;
+    }
+  },
 };
