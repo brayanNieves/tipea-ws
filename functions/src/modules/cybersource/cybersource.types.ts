@@ -46,6 +46,11 @@ export interface WalletSession {
   userAgent?: string | null;
   /** /companies doc id of the staff member's business, when set. */
   companyId?: string | null;
+  // Wallet sheet outcome reported by the tip page (logPaymentSheetEvent).
+  sheetCancelledAt?: FieldValue | Timestamp;
+  sheetCancels?: number;
+  sheetErrorAt?: FieldValue | Timestamp;
+  sheetError?: string | null;
   tipAmount: number;
   feeCharged: number;
   customerPays: number;

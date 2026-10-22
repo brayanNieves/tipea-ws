@@ -37,6 +37,7 @@ export {
   enrollCybersource3ds,
   chargeCybersourceTip,
 } from "./modules/cybersource/cybersource.controller";
+export { logPaymentSheetEvent } from "./modules/cybersource/payment-sheet.controller";
 
 // Customer balances / top-ups (legacy phone-based flow — kept for back-compat)
 export {

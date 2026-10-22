@@ -7,7 +7,9 @@ export type PaymentLogStep =
   | "3ds_setup"
   | "3ds_enroll"
   | "3ds_results"
-  | "charge";
+  | "charge"
+  // Reported by the tip page (logPaymentSheetEvent), not a gateway call.
+  | "wallet_sheet";
 
 export interface PaymentLogEntry {
   sessionId: string;
