@@ -170,7 +170,7 @@ export const createCybersourceSession = onCall(
     }
     await assertMinTip(amount, targetUserSnap);
 
-    const feeConfig = await customerFeeRepo.read();
+    const feeConfig = await customerFeeRepo.readFor(targetUserSnap);
     const fee = calculateCustomerFee(amount, feeConfig.percentageFee, feeConfig.fixedFee);
 
     // Charged in DOP, so the FX rate is irrelevant to the breakdown.

@@ -61,7 +61,8 @@ async function resolvePricing(tip: FirebaseFirestore.DocumentData) {
     // current config.
     let feeCharged: number = tip.feeCharged;
     if (typeof feeCharged !== "number" || !Number.isFinite(feeCharged) || feeCharged < 0) {
-      const cfg = await customerFeeRepo.read();
+      const staffSnap = await db.doc(`users/${tip.userId}`).get();
+      const cfg = await customerFeeRepo.readFor(staffSnap);
       feeCharged = calculateCustomerFee(tipAmount, cfg.percentageFee, cfg.fixedFee).totalFee;
     }
 
