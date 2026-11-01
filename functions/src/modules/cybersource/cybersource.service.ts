@@ -400,13 +400,18 @@ export const cybersourceService = {
       processingInformation: {
         capture: true,
         paymentSolution: PAYMENT_SOLUTION[params.wallet],
-        ...(auth ? { commerceIndicator: auth.indicator ?? "vbv" } : {}),
+        // Mastercard authenticates with UCAF ("spa"); Visa with CAVV ("vbv").
+        ...(auth
+          ? { commerceIndicator: auth.indicator ?? (auth.ucafAuthenticationData ? "spa" : "vbv") }
+          : {}),
       },
       tokenInformation: { transientTokenJwt: params.transientToken },
       ...(auth
         ? {
             consumerAuthenticationInformation: {
               cavv: auth.cavv,
+              ucafAuthenticationData: auth.ucafAuthenticationData,
+              ucafCollectionIndicator: auth.ucafCollectionIndicator,
               eciRaw: auth.eciRaw,
               xid: auth.xid,
               directoryServerTransactionId: auth.directoryServerTransactionId,

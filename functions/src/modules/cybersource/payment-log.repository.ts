@@ -37,6 +37,7 @@ const REDACTED_KEYS = [
   "stepupurl",
   "devicedatacollectionurl",
   "cavv",
+  "ucafauthenticationdata",
   "xid",
   "cryptogram",
   "number",

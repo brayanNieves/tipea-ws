@@ -104,6 +104,8 @@ function readAuthentication(
   const info = result?.consumerAuthenticationInformation ?? {};
   const fields: (keyof ConsumerAuthentication)[] = [
     "cavv",
+    "ucafAuthenticationData",
+    "ucafCollectionIndicator",
     "eciRaw",
     "xid",
     "directoryServerTransactionId",
@@ -115,6 +117,11 @@ function readAuthentication(
   for (const field of fields) {
     const value = info[field];
     if (typeof value === "string" && value.length > 0) authentication[field] = value;
+  }
+  // The authentication responses call it specificationVersion; payments wants paSpecificationVersion.
+  const specVersion = (info as { specificationVersion?: unknown }).specificationVersion;
+  if (!authentication.paSpecificationVersion && typeof specVersion === "string" && specVersion.length > 0) {
+    authentication.paSpecificationVersion = specVersion;
   }
   return authentication;
 }
@@ -505,7 +512,15 @@ export const chargeCybersourceTip = onCall(
         amount: session.customerPays,
       });
       authentication = readAuthentication(results);
-      if (!authentication.cavv && !authentication.authenticationTransactionId) {
+      const hasProof = !!(
+        authentication.cavv ||
+        authentication.ucafAuthenticationData ||
+        authentication.authenticationTransactionId
+      );
+      if (!hasProof && results.status === "AUTHENTICATION_SUCCESSFUL") {
+        console.warn(`⚠️ [chargeCybersourceTip] 3ds-results ok without proof fields | ${logCtx}`);
+      }
+      if (!hasProof && results.status !== "AUTHENTICATION_SUCCESSFUL") {
         const reason = payerAuthError(results);
         console.warn(`⚠️ [chargeCybersourceTip] 3ds-results | ${logCtx} | ${reason}`);
         await walletSessionRepo.markFailed(sessionId, `3ds-results: ${reason}`, null);

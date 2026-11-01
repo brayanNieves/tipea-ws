@@ -16,7 +16,11 @@ export type ThreeDsMode = "none" | "frictionless" | "challenge";
 
 /** Payer Authentication block echoed back into /pts/v2/payments. */
 export interface ConsumerAuthentication {
+  /** Visa / Amex proof of authentication. */
   cavv?: string;
+  /** Mastercard's equivalent of cavv (UCAF / AAV). */
+  ucafAuthenticationData?: string;
+  ucafCollectionIndicator?: string;
   eciRaw?: string;
   xid?: string;
   directoryServerTransactionId?: string;
