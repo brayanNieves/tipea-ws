@@ -72,18 +72,32 @@ export const onPayoutCreated = onDocumentCreated(
       const statsRef = db.doc(`user_daily_stats/${payout.userId}_${today}`);
       const summaryRef = db.doc(`daily_summaries/${today}`);
 
+      // set+merge, not update: on a day with no tips yet these docs don't
+      // exist, and update() would fail after the tips were already marked paid.
       await Promise.all([
-        statsRef.update({
-          pending: FieldValue.increment(-payout.netToUser),
-          paidOut: FieldValue.increment(payout.netToUser),
-          updatedAt: FieldValue.serverTimestamp(),
-        }),
+        statsRef.set(
+          {
+            userId: payout.userId,
+            userName: user.name ?? null,
+            role: user.role ?? null,
+            date: today,
+            pending: FieldValue.increment(-payout.netToUser),
+            paidOut: FieldValue.increment(payout.netToUser),
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        ),
 
-        summaryRef.update({
-          totalPaidOut: FieldValue.increment(payout.netToUser),
-          totalPending: FieldValue.increment(-payout.netToUser),
-          updatedAt: FieldValue.serverTimestamp(),
-        }),
+        summaryRef.set(
+          {
+            date: today,
+            closed: false,
+            totalPaidOut: FieldValue.increment(payout.netToUser),
+            totalPending: FieldValue.increment(-payout.netToUser),
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        ),
       ]);
 
       if (user.emailVerified === true && user.email) {
