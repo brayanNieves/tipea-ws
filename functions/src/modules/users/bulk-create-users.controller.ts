@@ -17,7 +17,7 @@ import { bulkCreateUsers } from "./bulk-create-users.service";
 //     ]
 //   }
 //   - max 100 entries per call
-//   - role: "dj" | "waiter" | "vallet" | "bartender" | "other"
+//   - role: "dj" | "waiter" | "vallet" | "bartender" | "packer" | "car_washer" | "barber" | "other"
 //   - password: ≥ 6 chars (Firebase Auth minimum)
 //   - phone: optional, must be E.164 format if provided (e.g. "+18095551234")
 //

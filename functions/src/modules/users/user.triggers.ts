@@ -1,6 +1,7 @@
 import * as functions from "firebase-functions/v1";
-import { admin, db } from "../../config/firebase";
+import { db } from "../../config/firebase";
 import { mailer } from "../../mailer_service";
+import { FieldValue } from "firebase-admin/firestore";
 
 // ─────────────────────────────────────────────────────────────
 // onUserCreated
@@ -14,6 +15,14 @@ import { mailer } from "../../mailer_service";
 // ─────────────────────────────────────────────────────────────
 export const onUserCreated = functions.auth.user().onCreate(async (user) => {
   try {
+    // Backoffice-only users (created by createBackofficeUser, which writes
+    // the profile first) don't receive tips: no plan, no subscription.
+    const existing = await db.doc(`users/${user.uid}`).get();
+    if (existing.get("role") === "backoffice") {
+      console.log(`ℹ️ [onUserCreated] backoffice user, skipping staff setup: ${user.uid}`);
+      return null;
+    }
+
     const renewalDate = new Date();
     renewalDate.setMonth(renewalDate.getMonth() + 1);
 
@@ -27,7 +36,7 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
       planId: "plan_starter",
       active: true,
       emailVerified: user.emailVerified ?? false,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     };
 
     if (user.email) userPayload.email = user.email;
@@ -40,7 +49,7 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
       userId: user.uid,
       planId: "plan_starter",
       status: "active",
-      startDate: admin.firestore.FieldValue.serverTimestamp(),
+      startDate: FieldValue.serverTimestamp(),
       renewalDate,
       canceledAt: null,
     });
@@ -51,7 +60,7 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
       message: `New user signed up: ${user.email ?? user.uid}`,
       userId: user.uid,
       read: false,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
 
     await batch.commit();

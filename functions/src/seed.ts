@@ -10,6 +10,7 @@
  */
 
 import * as admin from "firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -22,7 +23,7 @@ async function seed() {
     {
       id: "plan_starter",
       name: "Starter",
-      commissionPct: 7,
+      commissionPct: 0,
       monthlyFee: 0,
       maxTipsPerMonth: 100,
       features: ["qr_basic", "dashboard_basic"],
@@ -30,7 +31,7 @@ async function seed() {
     {
       id: "plan_pro",
       name: "Pro",
-      commissionPct: 4,
+      commissionPct: 0,
       monthlyFee: 1500,
       maxTipsPerMonth: -1,
       features: ["qr_custom", "dashboard_full", "analytics", "bulk_payout"],
@@ -38,7 +39,7 @@ async function seed() {
     {
       id: "plan_business",
       name: "Business",
-      commissionPct: 2,
+      commissionPct: 0,
       monthlyFee: 3500,
       maxTipsPerMonth: -1,
       features: ["qr_custom", "dashboard_full", "analytics", "bulk_payout", "priority_support"],
@@ -71,10 +72,10 @@ async function seed() {
         holderCedula: "001-1234567-8",
         holderPhone: "809-555-0001",
         verified: true,
-        addedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        addedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       },
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     },
     {
       id: "user_maria",
@@ -94,10 +95,10 @@ async function seed() {
         holderCedula: "001-9876543-2",
         holderPhone: "809-555-0002",
         verified: true,
-        addedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        addedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       },
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     },
     {
       id: "user_pedro",
@@ -109,7 +110,7 @@ async function seed() {
       pin: null,
       active: true,
       bankAccount: null, // no bank account yet
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     },
   ];
 
@@ -133,7 +134,7 @@ async function seed() {
     await db.collection("tips").add({
       ...tip,
       payoutId: null,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
   }
   console.log(`✓ ${tips.length} sample tips created`);

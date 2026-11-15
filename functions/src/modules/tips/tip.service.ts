@@ -1,15 +1,16 @@
 import type { TipCommissionResult } from "./tip.types";
 
 /**
- * Calculates commission and net amount for a tip, given the plan's
- * commission percentage (0-100). Commission is rounded to whole units.
+ * Staff ALWAYS receive 100% of the tip. The fee is charged to the customer
+ * on top of it (see `payments/service-fee.ts` and /config/customerFee), so
+ * there is never a deduction on the staff payout.
+ *
+ * The signature is kept so existing callers don't break; the `commissionPct`
+ * parameter is deliberately ignored.
  */
 export function calculateCommission(
   amount: number,
-  commissionPct: number
+  _commissionPct?: number
 ): TipCommissionResult {
-  const pct = commissionPct ?? 0;
-  const commissionAmt = Math.round((amount * pct) / 100);
-  const netAmount = amount - commissionAmt;
-  return { commissionPct: pct, commissionAmt, netAmount };
+  return { commissionPct: 0, commissionAmt: 0, netAmount: amount };
 }

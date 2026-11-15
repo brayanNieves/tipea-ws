@@ -1,6 +1,8 @@
+import { assertMinTip } from "../payments/tip-rules";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
-import { admin, db } from "../../config/firebase";
+import { db } from "../../config/firebase";
 import { mailer } from "../../mailer_service";
+import { FieldValue } from "firebase-admin/firestore";
 
 // ─────────────────────────────────────────────────────────────
 // createTip (HTTP Callable API)
@@ -28,13 +30,14 @@ export const createTip = onCall(async (request) => {
     if (!targetUserSnap.exists) {
       throw new HttpsError("not-found", `User ${targetUserId} not found.`);
     }
+    await assertMinTip(amount, targetUserSnap);
 
     const tipRef = await db.collection("tips").add({
       userId: targetUserId,
       senderUid: request.auth.uid,
       amount,
       status: "pending",
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     });
 
     console.log(

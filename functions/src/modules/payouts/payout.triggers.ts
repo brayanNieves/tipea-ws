@@ -1,7 +1,8 @@
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
-import { admin, db } from "../../config/firebase";
+import { db } from "../../config/firebase";
 import { mailer } from "../../mailer_service";
 import { getToday } from "../../shared/utils/date";
+import { FieldValue } from "firebase-admin/firestore";
 
 // ─────────────────────────────────────────────────────────────
 // onPayoutCreated
@@ -51,8 +52,8 @@ export const onPayoutCreated = onDocumentCreated(
         commissionPct: 0,
         commissionAmt: payout.commissionAmt,
         status: "settled",
-        settledAt: admin.firestore.FieldValue.serverTimestamp(),
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        settledAt: FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
       });
 
       const notifRef = db.collection("notifications").doc();
@@ -63,7 +64,7 @@ export const onPayoutCreated = onDocumentCreated(
         payoutId,
         amount: payout.netToUser,
         read: false,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
       });
 
       await batch.commit();
@@ -71,18 +72,32 @@ export const onPayoutCreated = onDocumentCreated(
       const statsRef = db.doc(`user_daily_stats/${payout.userId}_${today}`);
       const summaryRef = db.doc(`daily_summaries/${today}`);
 
+      // set+merge, not update: on a day with no tips yet these docs don't
+      // exist, and update() would fail after the tips were already marked paid.
       await Promise.all([
-        statsRef.update({
-          pending: admin.firestore.FieldValue.increment(-payout.netToUser),
-          paidOut: admin.firestore.FieldValue.increment(payout.netToUser),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }),
+        statsRef.set(
+          {
+            userId: payout.userId,
+            userName: user.name ?? null,
+            role: user.role ?? null,
+            date: today,
+            pending: FieldValue.increment(-payout.netToUser),
+            paidOut: FieldValue.increment(payout.netToUser),
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        ),
 
-        summaryRef.update({
-          totalPaidOut: admin.firestore.FieldValue.increment(payout.netToUser),
-          totalPending: admin.firestore.FieldValue.increment(-payout.netToUser),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }),
+        summaryRef.set(
+          {
+            date: today,
+            closed: false,
+            totalPaidOut: FieldValue.increment(payout.netToUser),
+            totalPending: FieldValue.increment(-payout.netToUser),
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        ),
       ]);
 
       if (user.emailVerified === true && user.email) {
@@ -123,7 +138,7 @@ export const onPayoutCreated = onDocumentCreated(
         .update({
           status: "error",
           errorMessage: error instanceof Error ? error.message : String(error),
-          errorAt: admin.firestore.FieldValue.serverTimestamp(),
+          errorAt: FieldValue.serverTimestamp(),
         })
         .catch(() => {
           /* noop */

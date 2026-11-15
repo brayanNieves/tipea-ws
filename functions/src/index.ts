@@ -19,6 +19,8 @@ export { onPayoutCreated } from "./modules/payouts/payout.triggers";
 export { onUserCreated } from "./modules/users/user.triggers";
 export { bulkCreateUsersFn as bulkCreateUsers } from "./modules/users/bulk-create-users.controller";
 export { changeUserEmail } from "./modules/users/change-email.controller";
+export { setAdminClaim } from "./modules/users/set-admin-claim.controller";
+export { createBackofficeUser } from "./modules/users/create-backoffice-user.controller";
 
 // Summaries / scheduled jobs
 export { onDayRollover } from "./modules/summaries/summary.jobs";
@@ -28,6 +30,35 @@ export { sendOtp, verifyOtp } from "./modules/auth/otp.controller";
 
 // Payments (Stripe)
 export { createPaymentIntent } from "./modules/payments/payment.controller";
+
+// Payments (Cybersource — Apple Pay / Google Pay for the Dominican Republic)
+export {
+  createCybersourceSession,
+  setupCybersource3ds,
+  enrollCybersource3ds,
+  chargeCybersourceTip,
+} from "./modules/cybersource/cybersource.controller";
+export { logPaymentSheetEvent } from "./modules/cybersource/payment-sheet.controller";
+
+// Customer balances / top-ups (legacy phone-based flow — kept for back-compat)
+export {
+  lookupBalance,
+  createTopupIntent,
+  confirmTopup,
+  tipFromBalance,
+} from "./modules/balances/balance.controller";
+
+// Hybrid wallet (anonymous-UID-keyed, drives the onboarding-after-N-tips flow)
+export {
+  getTipper,
+  markOnboardingSeen,
+  sendWalletOtp,
+  verifyWalletOtp,
+  createWalletTopupIntent,
+  confirmWalletTopup,
+  tipFromWallet,
+  logWalletEvent,
+} from "./modules/tippers/tipper.controller";
 
 // Spotify
 export { searchTracks } from "./modules/spotify/spotify.controller";
