@@ -7,6 +7,34 @@ service cloud.firestore {
       return s == 'completed' ? 2 : (s == 'started' ? 1 : 0);
     }
 
+    // ── Access helpers ─────────────────────────────────────
+    // Super admin = custom claim `admin` (set via setAdminClaim).
+    function isAdmin() {
+      return request.auth != null && request.auth.token.admin == true;
+    }
+
+    // Custom backoffice roles: users/{uid}.accessRoleId → /access_roles/{id}
+    // whose `modules` map holds 'none' | 'view' | 'edit' per section
+    // (staff, businesses, plans, verifications). Money sections are never
+    // grantable — they stay admin-only below.
+    function access(m) {
+      let rid = get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('accessRoleId', null);
+      return rid == null ? 'none'
+        : get(/databases/$(database)/documents/access_roles/$(rid)).data.get('modules', {}).get(m, 'none');
+    }
+    function canView(m) {
+      return request.auth != null && (isAdmin() || access(m) in ['view', 'edit']);
+    }
+    function canEdit(m) {
+      return request.auth != null && (isAdmin() || access(m) == 'edit');
+    }
+
+    // `role` values that are not staff and must never be granted by anyone
+    // other than the super admin.
+    function privilegedRoles() {
+      return ['admin', 'backoffice'];
+    }
+
     // ── users ──────────────────────────────────────────────
     // Read: any authenticated user (including anonymous customers scanning a
     //   QR) — needed to display the staff's name/role/photo on the tip page.
@@ -15,18 +43,61 @@ service cloud.firestore {
     //   full account number is encrypted at rest by the bulk-create flow).
     //   For a stricter posture, denormalize a `/staff_public/{userId}` doc
     //   with non-sensitive fields and lock /users back down to self-only.
-    // Update: still self-only.
+    // Update: self (limited), super admin, or a custom role with
+    //   staff:edit / verifications:edit (see branches below).
     match /users/{userId} {
       allow read: if request.auth != null;
-      // Staff edit their own profile, but not what the admin assigns them:
-      // business (sets their minimum tip), role, plan or active flag.
       allow update: if request.auth != null && (
-        request.auth.token.admin == true ||
+        isAdmin() ||
+        // Staff edit their own profile, but not what the admin assigns them:
+        // business (sets their minimum tip), role, plan, active flag or
+        // backoffice access role.
         (request.auth.uid == userId &&
           !request.resource.data.diff(resource.data).affectedKeys()
-            .hasAny(['companyId', 'role', 'planId', 'active']))
+            .hasAny(['companyId', 'role', 'planId', 'active', 'accessRoleId'])) ||
+        // staff:edit manages staff members only — never admins/backoffice
+        // users, never promotes anyone to them, never hands out access roles,
+        // and never touches the bank account (that's where payouts go).
+        (canEdit('staff') &&
+          !(resource.data.get('role', '') in privilegedRoles()) &&
+          !(request.resource.data.get('role', '') in privilegedRoles()) &&
+          !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['accessRoleId', 'bankAccount', 'documentNumber'])) ||
+        // verifications:edit only touches the review fields.
+        (canEdit('verifications') &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['verificationStatus', 'verificationReviewedAt', 'verificationRejectedReason']))
       );
-      allow create: if request.auth != null;
+      // Sign-up / add-staff create staff profiles client-side. Only the super
+      // admin may create admin/backoffice profiles or assign access roles
+      // (createBackofficeUser uses the Admin SDK and bypasses these rules).
+      allow create: if request.auth != null && (
+        isAdmin() ||
+        (!(request.resource.data.get('role', '') in privilegedRoles()) &&
+          request.resource.data.get('accessRoleId', null) == null)
+      );
+      allow delete: if false;
+    }
+
+    // ── access_roles ───────────────────────────────────────
+    // Custom backoffice roles. Readable by any signed-in user (names and the
+    // modules map only) so the backoffice can resolve its own permissions.
+    match /access_roles/{roleId} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+
+    // ── verifications ──────────────────────────────────────
+    // Identity verification requests, doc id = staff uid. Staff submit (or
+    // resubmit) their own as 'pending'; reviewers approve/reject.
+    match /verifications/{uid} {
+      allow read: if request.auth != null && (
+        request.auth.uid == uid || canView('verifications')
+      );
+      allow create, update: if request.auth != null && (
+        (request.auth.uid == uid && request.resource.data.status == 'pending') ||
+        canEdit('verifications')
+      );
       allow delete: if false;
     }
 
@@ -121,15 +192,23 @@ service cloud.firestore {
     // Only admin can modify
     match /plans/{planId} {
       allow read: if true;
-      allow write: if request.auth != null && request.auth.token.admin == true;
+      allow write: if canEdit('plans');
     }
 
     // ── companies ──────────────────────────────────────────
     // Businesses staff belong to (users.companyId). The public tip page reads
     // the business's minTip / suggestedTips (anonymous auth); no PII here.
+    // businesses:edit can create/edit companies but not their customer-fee
+    // overrides (money) — only the super admin sets those.
     match /companies/{companyId} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.token.admin == true;
+      allow create: if isAdmin() || (canEdit('businesses') &&
+        request.resource.data.get('feePercentage', null) == null &&
+        request.resource.data.get('feeFixed', null) == null);
+      allow update: if isAdmin() || (canEdit('businesses') &&
+        !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['feePercentage', 'feeFixed']));
+      allow delete: if isAdmin();
     }
 
     // ── payment_logs ───────────────────────────────────────
