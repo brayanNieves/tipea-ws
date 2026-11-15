@@ -15,6 +15,14 @@ import { FieldValue } from "firebase-admin/firestore";
 // ─────────────────────────────────────────────────────────────
 export const onUserCreated = functions.auth.user().onCreate(async (user) => {
   try {
+    // Backoffice-only users (created by createBackofficeUser, which writes
+    // the profile first) don't receive tips: no plan, no subscription.
+    const existing = await db.doc(`users/${user.uid}`).get();
+    if (existing.get("role") === "backoffice") {
+      console.log(`ℹ️ [onUserCreated] backoffice user, skipping staff setup: ${user.uid}`);
+      return null;
+    }
+
     const renewalDate = new Date();
     renewalDate.setMonth(renewalDate.getMonth() + 1);
 

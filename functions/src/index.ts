@@ -20,6 +20,7 @@ export { onUserCreated } from "./modules/users/user.triggers";
 export { bulkCreateUsersFn as bulkCreateUsers } from "./modules/users/bulk-create-users.controller";
 export { changeUserEmail } from "./modules/users/change-email.controller";
 export { setAdminClaim } from "./modules/users/set-admin-claim.controller";
+export { createBackofficeUser } from "./modules/users/create-backoffice-user.controller";
 
 // Summaries / scheduled jobs
 export { onDayRollover } from "./modules/summaries/summary.jobs";
