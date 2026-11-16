@@ -280,6 +280,12 @@ export interface Notification {
   payoutId?: string;
   amount?: number;
   commissionAmt?: number;
+  // user_signup only: "customer" = anonymous tip-page visitor (scanned a QR),
+  // "staff" = real account. Missing on notifications written before this.
+  signupKind?: "customer" | "staff";
+  userName?: string | null;
+  email?: string | null;
+  phone?: string | null;
   read: boolean;
   createdAt: Timestamp;
 }
