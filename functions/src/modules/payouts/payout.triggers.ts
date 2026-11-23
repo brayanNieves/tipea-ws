@@ -1,20 +1,14 @@
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
-import { db } from "../../config/firebase";
 import { mailer } from "../../mailer_service";
-import { getToday } from "../../shared/utils/date";
 import { FieldValue } from "firebase-admin/firestore";
+import { processPayout } from "./payout.service";
 
 // ─────────────────────────────────────────────────────────────
 // onPayoutCreated
-// Fires every time a bank transfer to a user is recorded.
-//
-// What it does:
-//   1. Marks all included tips as "paid"
-//   2. Creates a settled commission record
-//   3. Updates user_daily_stats (moves pending → paidOut)
-//   4. Updates daily_summaries
-//   5. Creates a notification
-//   6. Sends the staff member a payout email
+// Fires every time a bank transfer to a user is recorded. The work lives in
+// processPayout (payout.service.ts). On failure the payout is left in
+// status "error" with errorMessage, and the admin can retry it from the
+// backoffice with the retryPayout callable.
 // ─────────────────────────────────────────────────────────────
 export const onPayoutCreated = onDocumentCreated(
   { document: "payouts/{payoutId}" },
@@ -24,112 +18,12 @@ export const onPayoutCreated = onDocumentCreated(
 
     const payout = snap.data();
     const payoutId = event.params.payoutId;
-    const today = getToday();
 
     try {
-      if (!payout.userId || !payout.netToUser || !payout.tipsIncluded?.length) {
-        throw new Error(
-          `Invalid payout data: userId=${payout.userId}, netToUser=${payout.netToUser}, tipsIncluded=${payout.tipsIncluded}`
-        );
-      }
-
-      const userSnap = await db.doc(`users/${payout.userId}`).get();
-      const user = userSnap.data();
-      if (!user) throw new Error(`User not found: ${payout.userId}`);
-
-      const batch = db.batch();
-      for (const tipId of payout.tipsIncluded) {
-        const tipRef = db.doc(`tips/${tipId}`);
-        batch.update(tipRef, { status: "paid", payoutId });
-      }
-
-      const commissionRef = db.collection("commissions").doc();
-      batch.set(commissionRef, {
-        userId: payout.userId,
-        sourceId: payoutId,
-        sourceType: "payout",
-        grossAmount: payout.grossAmount,
-        commissionPct: 0,
-        commissionAmt: payout.commissionAmt,
-        status: "settled",
-        settledAt: FieldValue.serverTimestamp(),
-        createdAt: FieldValue.serverTimestamp(),
-      });
-
-      const notifRef = db.collection("notifications").doc();
-      batch.set(notifRef, {
-        type: "payout_completed",
-        message: `Transfer of $${payout.netToUser} completed for user ${payout.userId}`,
-        userId: payout.userId,
-        payoutId,
-        amount: payout.netToUser,
-        read: false,
-        createdAt: FieldValue.serverTimestamp(),
-      });
-
-      await batch.commit();
-
-      const statsRef = db.doc(`user_daily_stats/${payout.userId}_${today}`);
-      const summaryRef = db.doc(`daily_summaries/${today}`);
-
-      // set+merge, not update: on a day with no tips yet these docs don't
-      // exist, and update() would fail after the tips were already marked paid.
-      await Promise.all([
-        statsRef.set(
-          {
-            userId: payout.userId,
-            userName: user.name ?? null,
-            role: user.role ?? null,
-            date: today,
-            pending: FieldValue.increment(-payout.netToUser),
-            paidOut: FieldValue.increment(payout.netToUser),
-            updatedAt: FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        ),
-
-        summaryRef.set(
-          {
-            date: today,
-            closed: false,
-            totalPaidOut: FieldValue.increment(payout.netToUser),
-            totalPending: FieldValue.increment(-payout.netToUser),
-            updatedAt: FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        ),
-      ]);
-
-      if (user.emailVerified === true && user.email) {
-        await mailer.sendPayoutEmail({
-          payoutId,
-          grossAmount: payout.grossAmount,
-          commissionAmt: payout.commissionAmt,
-          netToUser: payout.netToUser,
-          method: payout.method,
-          bankName: payout.bankName,
-          accountType: payout.accountType,
-          accountLast4: payout.accountLast4,
-          holderName: payout.holderName,
-          referenceNumber: payout.referenceNumber ?? null,
-          transferDate:
-            payout.transferDate?.toDate?.()?.toISOString() ?? new Date().toISOString(),
-          tipCount: payout.tipsIncluded.length,
-          notes: payout.notes ?? null,
-          staffName: user.name,
-          staffEmail: user.email,
-          staffRole: user.role,
-        });
-      } else {
-        console.log(
-          `⚠️ [onPayoutCreated] Skipping payout email — emailVerified=${user.emailVerified}, email=${user.email ?? "none"}`
-        );
-      }
-
+      await processPayout(payoutId, payout);
       console.log(
         `✅ [onPayoutCreated] payoutId=${payoutId} | userId=${payout.userId} | amount=$${payout.netToUser}`
       );
-
       return null;
     } catch (error) {
       console.error(`❌ [onPayoutCreated] payoutId=${payoutId}`, error);

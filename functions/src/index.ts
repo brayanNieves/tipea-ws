@@ -14,6 +14,7 @@ export { createTip } from "./modules/tips/tip.controller";
 
 // Payouts
 export { onPayoutCreated } from "./modules/payouts/payout.triggers";
+export { retryPayout } from "./modules/payouts/payout.controller";
 
 // Users
 export { onUserCreated } from "./modules/users/user.triggers";
