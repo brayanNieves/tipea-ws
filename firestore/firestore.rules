@@ -238,10 +238,11 @@ service cloud.firestore {
     }
 
     // ── notifications ──────────────────────────────────────
-    // Only admin reads all notifications
+    // Only admin reads, marks read and deletes notifications (backoffice
+    // Notificaciones page). Creation stays Cloud Functions only.
     match /notifications/{notifId} {
-      allow read, update: if request.auth != null && request.auth.token.admin == true;
-      allow write: if false;
+      allow read, update, delete: if isAdmin();
+      allow create: if false;
     }
 
     // ── balances ──────────────────────────────────────────
